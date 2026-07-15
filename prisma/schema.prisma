@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                String         @id @default(uuid())
+  email             String         @unique
+  name              String?
+  notificationTime  String?        // Format: "HH:MM" (e.g. "09:00")
+  timezone          String         @default("UTC")
+  lastNotifiedAt    DateTime?
+  createdAt         DateTime       @default(now())
+  decks             Deck[]
+  quizAttempts      QuizAttempt[]
+}
+
+model Deck {
+  id           String        @id @default(uuid())
+  name         String        // User-provided name for this block
+  createdAt    DateTime      @default(now())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards        Card[]
+  quizAttempts QuizAttempt[]
+}
+
+model Card {
+  id             String   @id @default(uuid())
+  deckId         String
+  deck           Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  question       String
+  answer         String
+  originalRow    String   // Retains the full row data from the input CSV as a JSON string
+  state          String   @default("learning") // "learning" | "mastered"
+  needsRepeat    Boolean  @default(true)      // Flag for active-recall stack
+  wrongInQuiz    Boolean  @default(false)     // True if user missed this card in MCQ
+  createdAt      DateTime @default(now())
+}
+
+model QuizAttempt {
+  id        String   @id @default(uuid())
+  deckId    String
+  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score     Int      // Percentage of correct answers (0-100)
+  totalQ    Int      // Total questions asked
+  correctQ  Int      // Correct answers
+  createdAt DateTime @default(now())
+}

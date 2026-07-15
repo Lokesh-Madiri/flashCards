@@ -1,0 +1,406 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.titleArea {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.titleArea h1 {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  background: linear-gradient(to right, var(--text-main), #cbd5e1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.titleArea p {
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.sectionGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+}
+
+@media (min-width: 900px) {
+  .sectionGrid {
+    grid-template-columns: 4fr 5fr;
+  }
+}
+
+.uploadPanel {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.uploadPanel h2 {
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formGroup label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.inputField {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.inputField:focus {
+  border-color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.activeTab {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow-sm);
+}
+
+.textareaField {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.fileDropzone {
+  border: 2px dashed var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 30px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.fileDropzone:hover {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.02);
+}
+
+.fileInput {
+  display: none;
+}
+
+.selectedFileInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--success);
+  margin-top: 4px;
+}
+
+.providerToggle {
+  display: flex;
+  gap: 12px;
+}
+
+.providerOption {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.providerOption:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.providerOption.selected {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--text-main);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.1);
+}
+
+.progressContainer {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.progressBar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.progressMessage {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Decks Panel */
+.decksPanel {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.decksPanel h2 {
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.decksList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+
+.deckItem {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.deckHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.deckTitleContainer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.deckNameInput {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--accent);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  width: 80%;
+  outline: none;
+}
+
+.deckTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.deckTitle:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.deckMeta {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.deckActions {
+  display: flex;
+  gap: 8px;
+}
+
+.actionBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.actionBtn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.actionBtn.delete:hover {
+  color: var(--danger);
+  background: rgba(244, 63, 94, 0.1);
+}
+
+.deckProgressSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progressLabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.progressDeckBar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressDeckFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, #818cf8 100%);
+  transition: width 0.4s ease;
+}
+
+.deckControls {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.deckControls a,
+.deckControls button {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.studyBtn {
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+  transition: all 0.2s ease;
+}
+
+.studyBtn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: var(--accent);
+}
+
+.quizBtn {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #a7f3d0;
+  transition: all 0.2s ease;
+}
+
+.quizBtn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: var(--success);
+}
+.quizBtn:disabled {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-light);
+  color: rgba(255, 255, 255, 0.2);
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .uploadPanel {
+    padding: 20px;
+  }
+  .decksPanel {
+    padding: 20px;
+  }
+  .titleArea h1 {
+    font-size: 28px;
+  }
+  .deckControls {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .providerToggle {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
