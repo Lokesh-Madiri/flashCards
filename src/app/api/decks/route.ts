@@ -23,7 +23,7 @@ export async function GET() {
 
     const responseData = decks.map((deck) => {
       const totalCards = deck.cards.length
-      const activeCards = deck.cards.filter((c) => c.needsRepeat).length
+      const activeCards = deck.cards.filter((c: { needsRepeat: boolean }) => c.needsRepeat).length
       return {
         id: deck.id,
         name: deck.name,

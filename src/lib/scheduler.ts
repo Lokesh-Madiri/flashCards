@@ -120,7 +120,7 @@ export async function checkAndSendNotifications() {
           deckListHtml = '<ul style="list-style-type: none; padding: 0;">'
           for (const deck of user.decks) {
             const totalCards = deck.cards.length
-            const activeCards = deck.cards.filter(c => c.needsRepeat).length
+            const activeCards = deck.cards.filter((c: { needsRepeat: boolean }) => c.needsRepeat).length
             const masteredCards = totalCards - activeCards
             const pct = totalCards > 0 ? Math.round((masteredCards / totalCards) * 100) : 0
             
