@@ -9,6 +9,7 @@ import re
 import base64
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 import fitz  # PyMuPDF
 import psycopg2
 import psycopg2.extras
@@ -191,6 +192,10 @@ def parse_and_save_cards(raw_text, deck_id, chunk_index):
     try:
         inserted_count = 0
         for card in cards_list:
+            if not isinstance(card, dict):
+                print(f"[Chunk {chunk_index}] Warning: Card item is not a dictionary. Skipping: {card}")
+                continue
+            
             card_id = str(uuid.uuid4())
             question = card.get("question", "")
             answer = card.get("answer", "")
@@ -282,7 +287,6 @@ def process_single_chunk(chunk_id, jobId, chunk_index, start_page, end_page, dec
     cursor = conn.cursor()
     
     try:
-        # Retrieve fileData from database
         cursor.execute('SELECT "fileData" FROM "PdfIngestionJob" WHERE id = %s', (jobId,))
         job_row = cursor.fetchone()
         if not job_row or not job_row[0]:
@@ -290,7 +294,6 @@ def process_single_chunk(chunk_id, jobId, chunk_index, start_page, end_page, dec
             
         pdf_bytes = base64.b64decode(job_row[0])
         
-        # Extract text page-by-page from memory stream
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         chunk_text_parts = []
         for p_idx in range(start_page - 1, min(end_page, doc.page_count)):
@@ -304,7 +307,6 @@ def process_single_chunk(chunk_id, jobId, chunk_index, start_page, end_page, dec
         
         chunk_text = "\n\n".join(chunk_text_parts)
         
-        # Check topic detection to avoid cost
         if not chunk_text or not detect_afcat_topics(chunk_text):
             print(f"[Chunk {chunk_index}] Ignored - No AFCAT-relevant static current anchors detected. Skipping API call to minimize costs.")
             cursor.execute(
@@ -314,14 +316,11 @@ def process_single_chunk(chunk_id, jobId, chunk_index, start_page, end_page, dec
             conn.commit()
             return
 
-        # Call AI API
         prompt = GENERATION_PROMPT + "\n" + chunk_text
         ai_response = call_ai_api(prompt, provider)
         
-        # Parse and save cards
         parse_and_save_cards(ai_response, deck_id, chunk_index)
         
-        # Update status to completed
         cursor.execute(
             'UPDATE "PdfChunk" SET status = %s, "error" = NULL, "updatedAt" = NOW() WHERE id = %s',
             ("COMPLETED", chunk_id)
@@ -344,99 +343,104 @@ def process_single_chunk(chunk_id, jobId, chunk_index, start_page, end_page, dec
 
 def main():
     parser = argparse.ArgumentParser(description="AFCAT Scalable PDF Ingestion Pipeline")
-    parser.add_argument("--job-id", type=str, help="Ingestion job ID to initialize")
-    parser.add_argument("--deck-id", type=str, help="Target deck ID")
-    parser.add_argument("--provider", type=str, default="groq", choices=["groq", "gemini"], help="AI Provider")
     parser.add_argument("--workers", type=int, default=4, help="Number of parallel worker threads")
+    parser.add_argument("--provider", type=str, default="groq", choices=["groq", "gemini"], help="AI Provider")
     
     args = parser.parse_args()
     
     worker_uuid = str(uuid.uuid4())
     print(f"[Pipeline] Worker ID initialized: {worker_uuid}")
-    
-    if args.job_id:
-        if not args.deck_id:
-            print("Error: --deck-id is required when initializing a --job-id.")
-            sys.exit(1)
-            
-        print(f"[Pipeline] Initializing Job {args.job_id}...")
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Retrieve PDF fileData from database
-            cursor.execute('SELECT "fileData" FROM "PdfIngestionJob" WHERE id = %s', (args.job_id,))
-            row = cursor.fetchone()
-            if not row or not row[0]:
-                print(f"Error: Job {args.job_id} or its fileData not found in database.")
-                sys.exit(1)
-                
-            pdf_bytes = base64.b64decode(row[0])
-            
-            # Compute file hash
-            file_hash = hashlib.sha256(pdf_bytes).hexdigest()
-            
-            # Open PDF to get pages
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            total_pages = doc.page_count
-            doc.close()
-            
-            print(f"[Pipeline] PDF total pages: {total_pages}, hash: {file_hash}")
-            
-            # Check if this PDF hash already exists (avoid duplicate ingestion)
-            cursor.execute('SELECT id, status FROM "PdfIngestionJob" WHERE "fileHash" = %s AND id != %s', (file_hash, args.job_id))
-            existing = cursor.fetchone()
-            if existing:
-                job_id_existing, status_existing = existing
-                print(f"[Pipeline] Warning: This PDF hash already exists (Job {job_id_existing}, status: {status_existing}). Duplicate ingestion avoided.")
-                cursor.execute('UPDATE "PdfIngestionJob" SET status = %s WHERE id = %s', ("COMPLETED", args.job_id))
-                conn.commit()
-                sys.exit(0)
-            
-            # Update hash and totalPages in db
-            cursor.execute(
-                'UPDATE "PdfIngestionJob" SET "fileHash" = %s, "totalPages" = %s, status = %s, "updatedAt" = NOW() WHERE id = %s',
-                (file_hash, total_pages, "PROCESSING", args.job_id)
-            )
-            
-            # Register chunks
-            chunk_size = 10  # 10 pages per chunk
-            chunks_to_create = []
-            chunk_index = 0
-            for start in range(1, total_pages + 1, chunk_size):
-                end = min(total_pages, start + chunk_size - 1)
-                chunks_to_create.append((
-                    str(uuid.uuid4()), args.job_id, chunk_index, start, end, "PENDING"
-                ))
-                chunk_index += 1
-            
-            # Bulk insert chunks
-            psycopg2.extras.execute_values(
-                cursor,
-                'INSERT INTO "PdfChunk" (id, "jobId", "chunkIndex", "startPage", "endPage", status, "createdAt", "updatedAt") VALUES %s',
-                [(c[0], c[1], c[2], c[3], c[4], c[5], psycopg2.Timestamp(time.time()), psycopg2.Timestamp(time.time())) for c in chunks_to_create]
-            )
-            conn.commit()
-            print(f"[Pipeline] Job {args.job_id} successfully initialized with {len(chunks_to_create)} chunks.")
-        except Exception as e:
-            conn.rollback()
-            print(f"[Pipeline] Initialization failed: {e}")
-            sys.exit(1)
-        finally:
-            cursor.close()
-            conn.close()
-            
-    print("[Pipeline] Running workers loop to process chunks...")
+    print("[Pipeline] Running workers loop...")
     
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         while True:
             conn = get_db_connection()
             cursor = conn.cursor()
             
+            # --- 1. CHECK AND INITIALIZE PENDING INGESTION JOBS ---
+            try:
+                cursor.execute(
+                    'SELECT id, "deckId", filename FROM "PdfIngestionJob" '
+                    'WHERE status = \'PENDING\' '
+                    'LIMIT 1 FOR UPDATE SKIP LOCKED'
+                )
+                pending_job = cursor.fetchone()
+                
+                if pending_job:
+                    job_id, deck_id, filename = pending_job
+                    
+                    # Verify target deck exists before partitioning chunks
+                    cursor.execute('SELECT id FROM "Deck" WHERE id = %s', (deck_id,))
+                    if not cursor.fetchone():
+                        print(f"[Pipeline] Warning: Linked target Deck {deck_id} does not exist. Marking Job {job_id} as FAILED (orphaned).")
+                        cursor.execute('UPDATE "PdfIngestionJob" SET status = %s, "updatedAt" = NOW() WHERE id = %s', ("FAILED", job_id))
+                        conn.commit()
+                        continue
+
+                    print(f"[Pipeline] Found pending ingestion Job: {job_id} ({filename}). Initializing chunks...")
+                    
+                    cursor.execute('SELECT "fileData" FROM "PdfIngestionJob" WHERE id = %s', (job_id,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        pdf_bytes = base64.b64decode(row[0])
+                        file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+                        
+                        # Verify duplicate hash
+                        cursor.execute('SELECT id, status FROM "PdfIngestionJob" WHERE "fileHash" = %s AND id != %s', (file_hash, job_id))
+                        existing = cursor.fetchone()
+                        if existing:
+                            job_id_existing, status_existing = existing
+                            print(f"[Pipeline] Duplicate file hash found (Job {job_id_existing}). Skipping Ingestion.")
+                            cursor.execute('UPDATE "PdfIngestionJob" SET status = %s WHERE id = %s', ("COMPLETED", job_id))
+                            conn.commit()
+                            continue
+                            
+                        # Load PDF in memory to parse count
+                        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                        total_pages = doc.page_count
+                        doc.close()
+                        
+                        print(f"[Pipeline] PDF total pages: {total_pages}, hash: {file_hash}")
+                        
+                        # Set job status to PROCESSING
+                        cursor.execute(
+                            'UPDATE "PdfIngestionJob" SET "fileHash" = %s, "totalPages" = %s, status = %s, "updatedAt" = NOW() WHERE id = %s',
+                            (file_hash, total_pages, "PROCESSING", job_id)
+                        )
+                        
+                        # Partition into 10-page chunks
+                        chunk_size = 10
+                        chunks_to_create = []
+                        chunk_idx = 0
+                        for start in range(1, total_pages + 1, chunk_size):
+                            end = min(total_pages, start + chunk_size - 1)
+                            chunks_to_create.append((
+                                str(uuid.uuid4()), job_id, chunk_idx, start, end, "PENDING"
+                            ))
+                            chunk_idx += 1
+                            
+                        # Insert chunks
+                        psycopg2.extras.execute_values(
+                            cursor,
+                            'INSERT INTO "PdfChunk" (id, "jobId", "chunkIndex", "startPage", "endPage", status, "createdAt", "updatedAt") VALUES %s',
+                            [(c[0], c[1], c[2], c[3], c[4], c[5], datetime.now(), datetime.now()) for c in chunks_to_create]
+                        )
+                        conn.commit()
+                        print(f"[Pipeline] Successfully initialized {len(chunks_to_create)} chunks for job {job_id}.")
+            except Exception as e:
+                conn.rollback()
+                print(f"[Pipeline] Failed to initialize pending job: {e}")
+                time.sleep(3)
+                continue
+            finally:
+                cursor.close()
+                conn.close()
+            
+            # --- 2. CLAIM AND PROCESS PENDING CHUNKS ---
+            conn = get_db_connection()
+            cursor = conn.cursor()
             chunk = None
             try:
-                # Lock and claim one chunk that is PENDING or FAILED
                 cursor.execute(
                     'SELECT c.id, c."jobId", c."chunkIndex", c."startPage", c."endPage", j."deckId" '
                     'FROM "PdfChunk" c '
@@ -449,6 +453,16 @@ def main():
                 
                 if chunk:
                     chunk_id, jobId, chunk_index, start_page, end_page, deck_id = chunk
+                    
+                    # Verify deck exists before locking chunk
+                    cursor.execute('SELECT id FROM "Deck" WHERE id = %s', (deck_id,))
+                    if not cursor.fetchone():
+                        print(f"[Pipeline] Warning: Linked target Deck {deck_id} does not exist. Skipping chunk {chunk_id}.")
+                        cursor.execute('UPDATE "PdfChunk" SET status = %s, "error" = %s, "updatedAt" = NOW() WHERE id = %s', ("FAILED", "Target deck was deleted.", chunk_id))
+                        cursor.execute('UPDATE "PdfIngestionJob" SET status = %s, "updatedAt" = NOW() WHERE id = %s', ("FAILED", jobId))
+                        conn.commit()
+                        continue
+
                     cursor.execute(
                         'UPDATE "PdfChunk" SET status = %s, "lockedBy" = %s, "lockedAt" = NOW(), "updatedAt" = NOW() WHERE id = %s',
                         ("PROCESSING", worker_uuid, chunk_id)
