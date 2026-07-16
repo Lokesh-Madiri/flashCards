@@ -12,35 +12,87 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr
 }
 
+function sortCardsByGroupAndPriority(cards: any[]): any[] {
+  const getPriorityWeight = (priorityStr: string): number => {
+    if (!priorityStr) return 0;
+    if (priorityStr.includes('★★★★★')) return 5;
+    if (priorityStr.includes('★★★★☆')) return 4;
+    if (priorityStr.includes('★★★☆☆')) return 3;
+    if (priorityStr.includes('★★☆☆☆')) return 2;
+    if (priorityStr.includes('★☆☆☆☆')) return 1;
+    return 0;
+  };
+
+  const mapped = cards.map(card => {
+    let category = 'Miscellaneous';
+    let priority = 0;
+    try {
+      const parsed = JSON.parse(card.originalRow);
+      if (parsed) {
+        category = parsed['Category'] || parsed['category'] || 'Miscellaneous';
+        const priStr = parsed['AFCAT Priority'] || parsed['afcatPriority'] || parsed['Priority'] || '';
+        priority = getPriorityWeight(priStr);
+      }
+    } catch (e) {}
+    return { card, category, priority };
+  });
+
+  mapped.sort((a, b) => {
+    const catCompare = a.category.localeCompare(b.category);
+    if (catCompare !== 0) return catCompare;
+    return b.priority - a.priority;
+  });
+
+  return mapped.map(item => item.card);
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const deckId = searchParams.get('deckId')
+    const progressStr = searchParams.get('progress')
 
     if (!deckId) {
       return NextResponse.json({ error: 'deckId parameter is required.' }, { status: 400 })
     }
 
-    // Count previous quiz attempts for this deck to increase questions dynamically
-    const attemptCount = await prisma.quizAttempt.count({
+    // Fetch all cards in the deck
+    const cardsRaw = await prisma.card.findMany({
       where: { deckId }
     })
-    
-    // limit starts at 20, then 30 (20 current + 10 previous), then 40, etc.
-    const limit = 20 + attemptCount * 10
 
-    // Fetch cards ordered by creation date DESC
-    const cards = await prisma.card.findMany({
-      where: { deckId },
-      orderBy: { createdAt: 'desc' }
-    })
-
-    if (cards.length === 0) {
+    if (cardsRaw.length === 0) {
       return NextResponse.json([])
     }
 
-    // Slice to the computed limit
-    const selectedCards = cards.slice(0, Math.min(cards.length, limit))
+    // Sort cards exactly as we do in Study Mode
+    const sortedCards = sortCardsByGroupAndPriority(cardsRaw)
+
+    let selectedCards: any[] = []
+    const N = progressStr ? parseInt(progressStr, 10) : NaN
+
+    if (!isNaN(N) && N >= 20) {
+      // 1. Current chunk: cards studied in the last 20 block (indices N - 20 to N - 1)
+      const currentSlice = sortedCards.slice(Math.max(0, N - 20), Math.min(sortedCards.length, N))
+      selectedCards.push(...currentSlice)
+
+      // 2. Previous chunk: 10 random cards from the previous block (indices N - 40 to N - 21)
+      if (N >= 40) {
+        const prevSlice = sortedCards.slice(Math.max(0, N - 40), N - 20)
+        const shuffledPrev = shuffleArray(prevSlice)
+        selectedCards.push(...shuffledPrev.slice(0, 10))
+      }
+
+      // 3. Older chunks: 10 random cards from all older blocks combined (indices 0 to N - 41)
+      if (N >= 60) {
+        const olderSlice = sortedCards.slice(0, N - 40)
+        const shuffledOlder = shuffleArray(olderSlice)
+        selectedCards.push(...shuffledOlder.slice(0, 10))
+      }
+    } else {
+      // Default fallback (e.g. deck finished or no progress milestone): load all sorted cards
+      selectedCards = sortedCards
+    }
 
     const quizQuestions = selectedCards.map((card) => {
       let options: string[] = []
@@ -87,8 +139,8 @@ export async function GET(req: Request) {
         correctAnswer = mcqCorrect
         useMcq = true
       } else {
-        // Fallback distractor generation
-        const allAnswers = Array.from(new Set(cards.map(c => c.answer)))
+        // Fallback distractor generation using the main deck list
+        const allAnswers = Array.from(new Set(sortedCards.map(c => c.answer)))
         let distractorCandidates = allAnswers.filter(a => a.toLowerCase() !== correctAnswer.toLowerCase())
 
         distractorCandidates = shuffleArray(distractorCandidates)

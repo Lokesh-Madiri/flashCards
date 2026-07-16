@@ -12,7 +12,8 @@ import {
   ChevronUp, 
   BookOpen, 
   Award,
-  Database
+  Database,
+  Sparkles
 } from 'lucide-react'
 import styles from './page.module.css'
 
@@ -80,6 +81,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   
   // Expand metadata state
   const [showMetadata, setShowMetadata] = useState(false)
+  const [lastPromptedMilestone, setLastPromptedMilestone] = useState(0)
 
   useEffect(() => {
     loadDeck()
@@ -233,6 +235,46 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
             >
               <RotateCcw size={16} />
               <span>Review Deck Again</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show progressive milestone quiz after studying every 20 flashcards
+  if (completedCount > 0 && completedCount % 20 === 0 && completedCount !== lastPromptedMilestone) {
+    return (
+      <div className={`${styles.studyContainer} container animate-fade-in`}>
+        <div className={styles.header}>
+          <Link href="/" className={styles.backLink}>
+            <ArrowLeft size={16} />
+            <span>Dashboard</span>
+          </Link>
+          <div className={styles.deckName}>{deckName}</div>
+        </div>
+
+        <div className={`${styles.completedScreen} glass-panel`}>
+          <div className={styles.completionIcon} style={{ background: 'rgba(99, 102, 241, 0.15)', borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+            <Sparkles size={40} />
+          </div>
+          <h2>Progress Quiz Milestone!</h2>
+          <p>
+            You have studied {completedCount} flashcards in this session. Take an MCQ quiz to lock in your memory for these cards!
+          </p>
+          
+          <div className="flex gap-4" style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
+            <button 
+              onClick={() => router.push(`/deck/${deckId}/quiz?progress=${completedCount}`)}
+              className="btn-primary"
+            >
+              Start Milestone Quiz
+            </button>
+            <button 
+              onClick={() => setLastPromptedMilestone(completedCount)} 
+              className="btn-secondary"
+            >
+              Continue Studying
             </button>
           </div>
         </div>

@@ -53,11 +53,18 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   // Expand metadata state
   const [showMetadata, setShowMetadata] = useState(false)
 
+  const [progressVal, setProgressVal] = useState<string | null>(null)
+
   useEffect(() => {
-    loadQuiz()
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search)
+      const p = searchParams.get('progress')
+      setProgressVal(p)
+      loadQuiz(p)
+    }
   }, [deckId])
 
-  const loadQuiz = async () => {
+  const loadQuiz = async (prog: string | null = null) => {
     try {
       setLoading(true)
       
@@ -72,7 +79,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
       }
 
       // Load quiz questions
-      const quizRes = await fetch(`/api/quiz?deckId=${deckId}`)
+      const quizRes = await fetch(`/api/quiz?deckId=${deckId}${prog ? `&progress=${prog}` : ''}`)
       if (quizRes.ok) {
         const data = await quizRes.json()
         setQuestions(data)
