@@ -64,6 +64,7 @@ model PdfIngestionJob {
   deckId      String
   filename    String
   fileHash    String     @unique // SHA-256 hash of file content to prevent duplicate ingestion
+  fileData    String     // Stores the base64-encoded PDF binary data
   status      String     @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
   totalPages  Int        @default(0)
   createdAt   DateTime   @default(now())

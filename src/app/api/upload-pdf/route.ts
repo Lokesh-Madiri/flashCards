@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
     const fileHash = crypto.createHash('sha256').update(buffer).digest('hex')
+    const fileData = buffer.toString('base64')
 
     // Avoid duplicate ingestion
     const existingJob = await prisma.pdfIngestionJob.findUnique({
@@ -62,44 +63,49 @@ export async function POST(req: Request) {
       })
     }
 
-    // Save PDF file to uploads directory
-    const uploadsDir = path.join(process.cwd(), 'uploads')
-    await fs.mkdir(uploadsDir, { recursive: true })
-    const filename = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`
-    const filePath = path.join(uploadsDir, filename)
-    await fs.writeFile(filePath, buffer)
-
-    // Create a new ingestion job
+    // Create a new ingestion job directly in Neon
     const job = await prisma.pdfIngestionJob.create({
       data: {
         id: crypto.randomUUID(),
         deckId: targetDeckId,
-        filename,
+        filename: file.name.replace(/\s+/g, '_'),
         fileHash,
+        fileData,
         status: 'PENDING',
         totalPages: 0,
       }
     })
 
-    // Spawn the python process in the background
-    const pyProcess = spawn('python', [
-      path.join(process.cwd(), 'scripts', 'pdf_pipeline.py'),
-      '--job-id', job.id,
-      '--pdf-path', filePath,
-      '--deck-id', targetDeckId,
-      '--provider', provider
-    ], {
-      detached: true,
-      stdio: 'ignore'
-    })
-    pyProcess.unref()
+    // Conditionally spawn Python process locally (skip on Vercel)
+    const isVercel = process.env.VERCEL === '1'
+    let triggeredLocal = false
+
+    if (!isVercel) {
+      try {
+        const pyProcess = spawn('python', [
+          path.join(process.cwd(), 'scripts', 'pdf_pipeline.py'),
+          '--job-id', job.id,
+          '--deck-id', targetDeckId,
+          '--provider', provider
+        ], {
+          detached: true,
+          stdio: 'ignore'
+        })
+        pyProcess.unref()
+        triggeredLocal = true
+      } catch (spawnErr) {
+        console.warn('Failed to auto-spawn local Python subprocess. Worker must be run manually:', spawnErr)
+      }
+    }
 
     return NextResponse.json({
       success: true,
       jobId: job.id,
       status: 'PENDING',
       deckId: targetDeckId,
-      message: 'PDF Uploaded successfully. Ingestion pipeline triggered in the background.',
+      message: triggeredLocal 
+        ? 'PDF Uploaded. Ingestion pipeline worker triggered locally in the background.'
+        : 'PDF Uploaded to database. Run: "python scripts/pdf_pipeline.py" on your local worker machine to process the stack.',
     })
   } catch (err: any) {
     console.error('PDF upload and ingestion trigger failed:', err)
