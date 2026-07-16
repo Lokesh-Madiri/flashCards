@@ -196,43 +196,49 @@ export default function Dashboard() {
   }
 
   const uploadTextInChunks = async (text: string) => {
-    const paragraphs = text
-      .split(/\n\s*\n/)
-      .map(p => p.trim())
-      .filter(p => p.length > 0)
+    // --- SLIDING WINDOW MAP-REDUCE CHUNKING ---
+    // Split entire text into words as the base unit
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0)
 
-    if (paragraphs.length === 0) {
+    if (words.length === 0) {
       setErrorMsg('The text input is empty.')
       setUploading(false)
       return
     }
 
-    const chunkSize = 4
-    const chunks: string[][] = []
-    for (let i = 0; i < paragraphs.length; i += chunkSize) {
-      chunks.push(paragraphs.slice(i, i + chunkSize))
+    const CHUNK_SIZE = 800   // Words per chunk sent to AI
+    const OVERLAP    = 150   // Words of sliding overlap to preserve sentence context
+
+    // Build overlapping chunks
+    const chunks: string[] = []
+    let start = 0
+    while (start < words.length) {
+      const end = Math.min(start + CHUNK_SIZE, words.length)
+      chunks.push(words.slice(start, end).join(' '))
+      if (end === words.length) break
+      start += CHUNK_SIZE - OVERLAP  // Slide forward, keeping last OVERLAP words for context
     }
 
     let activeDeckId: string | null = uploadMode === 'append' ? selectedDeckId : null
-    const targetName = uploadMode === 'append' 
-      ? (decks.find(d => d.id === selectedDeckId)?.name || deckName) 
+    const targetName = uploadMode === 'append'
+      ? (decks.find(d => d.id === selectedDeckId)?.name || deckName)
       : deckName
 
     try {
       for (let index = 0; index < chunks.length; index++) {
-        const chunkParagraphs = chunks[index]
         const progress = Math.round((index / chunks.length) * 100)
         setProgressPercent(progress)
-        setProgressMsg(`Processing text chunk ${index + 1} of ${chunks.length}...`)
+        setProgressMsg(
+          `Sliding window chunk ${index + 1} of ${chunks.length} (~${Math.round(chunks[index].split(' ').length)} words, ${OVERLAP}-word overlap)...`
+        )
 
-        const chunkStr = chunkParagraphs.join('\n\n')
         const textRes: Response = await fetch('/api/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             deckName: targetName,
             isCsv: false,
-            chunk: chunkStr,
+            chunk: chunks[index],
             provider,
             deckId: activeDeckId,
           }),
@@ -248,13 +254,13 @@ export default function Dashboard() {
       }
 
       setProgressPercent(100)
-      setProgressMsg('Deck processing complete!')
+      setProgressMsg(`Done! Processed ${chunks.length} sliding window chunk${chunks.length > 1 ? 's' : ''} from ${words.length.toLocaleString()} words.`)
       setTimeout(() => {
         setUploading(false)
         setDeckName('')
         setTextInput('')
         fetchDecks()
-      }, 1000)
+      }, 1500)
     } catch (err: any) {
       console.error(err)
       setErrorMsg(err.message || 'An error occurred during AI processing.')
