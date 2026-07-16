@@ -26,6 +26,42 @@ interface Card {
   wrongInQuiz: boolean
 }
 
+function sortCardsByGroupAndPriority(cards: Card[]): Card[] {
+  const getPriorityWeight = (priorityStr: string): number => {
+    if (!priorityStr) return 0;
+    if (priorityStr.includes('★★★★★')) return 5;
+    if (priorityStr.includes('★★★★☆')) return 4;
+    if (priorityStr.includes('★★★☆☆')) return 3;
+    if (priorityStr.includes('★★☆☆☆')) return 2;
+    if (priorityStr.includes('★☆☆☆☆')) return 1;
+    return 0;
+  };
+
+  const mapped = cards.map(card => {
+    let category = 'Miscellaneous';
+    let priority = 0;
+    try {
+      const parsed = JSON.parse(card.originalRow);
+      if (parsed) {
+        category = parsed['Category'] || parsed['category'] || 'Miscellaneous';
+        const priStr = parsed['AFCAT Priority'] || parsed['afcatPriority'] || parsed['Priority'] || '';
+        priority = getPriorityWeight(priStr);
+      }
+    } catch (e) {
+      // JSON parse error, fall back to default
+    }
+    return { card, category, priority };
+  });
+
+  mapped.sort((a, b) => {
+    const catCompare = a.category.localeCompare(b.category);
+    if (catCompare !== 0) return catCompare;
+    return b.priority - a.priority; // higher priority first
+  });
+
+  return mapped.map(item => item.card);
+}
+
 export default function StudyPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
   const { id: deckId } = use(params)
@@ -74,9 +110,10 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
       const cardsRes = await fetch(`/api/cards?deckId=${deckId}`)
       if (cardsRes.ok) {
         const cardsData = await cardsRes.json()
-        setCards(cardsData)
-        setActiveQueue(cardsData)
-        setInitialActiveCount(cardsData.length)
+        const sortedCards = sortCardsByGroupAndPriority(cardsData)
+        setCards(sortedCards)
+        setActiveQueue(sortedCards)
+        setInitialActiveCount(sortedCards.length)
       }
     } catch (err) {
       console.error('Failed to load study deck:', err)

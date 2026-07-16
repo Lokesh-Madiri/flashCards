@@ -106,13 +106,27 @@ export async function generateCardsWithGemini(dataString: string, isCsv: boolean
   return parseJsonResponse(rawText);
 }
 
+let groqKeyCounter = 0
+
 export async function generateCardsWithGroq(dataString: string, isCsv: boolean): Promise<CardGenerationOutput[]> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === 'placeholder_groq_key') {
-    throw new Error('Groq API key is not configured. Please set GROQ_API_KEY in your .env file.');
+  const keysStr = process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || ''
+  const keys = keysStr.split(',').map(k => k.trim()).filter(k => k.length > 0)
+  
+  if (keys.length === 0 || keys[0] === 'placeholder_groq_key') {
+    throw new Error('Groq API key(s) not configured. Please set GROQ_API_KEYS or GROQ_API_KEY in your .env file.')
   }
 
-  const prompt = GENERATION_PROMPT(isCsv) + '\n' + dataString;
+  // Round-robin selection
+  const apiKey = keys[groqKeyCounter % keys.length]
+  console.log(`[GroqRoundRobin] Using API key index ${groqKeyCounter % keys.length} of ${keys.length}`)
+  groqKeyCounter++
+
+  // Spacing delay to avoid rate limit spikes
+  const spacingTimeout = 2500
+  console.log(`[GroqRoundRobin] Sleeping for ${spacingTimeout}ms before request...`)
+  await new Promise(resolve => setTimeout(resolve, spacingTimeout))
+
+  const prompt = GENERATION_PROMPT(isCsv) + '\n' + dataString
 
   const response = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
