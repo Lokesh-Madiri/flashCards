@@ -136,14 +136,13 @@
 }
 
 .answerText {
-  font-size: 32px;
-  font-weight: 800;
+  font-size: 18px;
+  font-weight: 500;
   color: #fff;
-  text-align: center;
+  text-align: left;
   margin: auto 0;
-  background: linear-gradient(to right, #34d399, #6ee7b7);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .hint {

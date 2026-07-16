@@ -5,21 +5,53 @@ export interface CardGenerationOutput {
 }
 
 const GENERATION_PROMPT = (isCsv: boolean) => `
-You are an expert educational tutor.
-Convert the provided input data ${isCsv ? '(which represents a JSON-serialized chunk of CSV rows)' : '(which represents a segment of plain text)'} into a set of high-quality study flashcards.
+You are an expert AFCAT exam educational tutor.
+Convert the provided input data ${isCsv ? '(which represents a JSON-serialized chunk of CSV rows)' : '(which represents a segment of plain text)'} into a set of high-quality study cards tailored for the AFCAT (Air Force Common Admission Test).
+
+For each news item or row extracted:
+1. Identify the main topic.
+2. Extract only exam-relevant facts.
+3. Classify into exactly one of these categories:
+   - Defence & Military
+   - Government Schemes
+   - Reports & Indices
+   - International Organisations
+   - Science & Technology
+   - Environment
+   - Geography
+   - Economy & Banking
+   - Awards & Appointments
+   - Miscellaneous
+4. Assign AFCAT priority:
+   ★★★★★ Extremely Important
+   ★★★★☆ Important
+   ★★★☆☆ Moderate
+   ★★☆☆☆ Low
+   ★☆☆☆☆ Very Low
+5. Extract any hidden Static GK that AFCAT could ask.
+6. Generate one Q&A card where:
+   - "question" (Front): Exam-style question.
+   - "answer" (Back): Answer in 2–5 bullets (using the bullet character "• " and separated by newlines \\n).
+7. Add tags (e.g., Defence, ISRO, Economy, Environment).
+8. Do not include speeches, opinions, political rhetoric, or details that have no exam value. Keep each card self-contained and answerable in under 30 seconds.
 
 Rules:
-1. Each flashcard must consist of a "question", a "answer", and "originalRow".
-2. The "answer" MUST be a single word or a very short phrase (maximum 2 words, single word is highly preferred). It must be easy to type and verify.
-3. The "question" must be a meaningful, clear question that tests a specific fact from the input.
-4. "originalRow" MUST contain:
-   - If CSV: the exact JSON string of the source row.
-   - If plain text: the exact sentence or paragraph that contains the answer.
-5. All columns and information from the input data must be covered; do not leave out any rows or key facts.
-6. The response MUST be a valid JSON array of objects matching this TypeScript type:
-   Array<{ question: string; answer: string; originalRow: string; }>
-
-Do not include markdown code block formatting (like \`\`\`json ... \`\`\`) in the response if possible, just return raw JSON text. If you must use markdown, make sure it is valid JSON.
+1. The response MUST be a valid JSON array of objects matching this TypeScript type:
+   Array<{
+     question: string;
+     answer: string;
+     originalRow: string;
+   }>
+2. To preserve the metadata, the "originalRow" field MUST be a stringified JSON object containing these exact keys:
+   {
+     "Main Topic": string,
+     "Category": string,
+     "AFCAT Priority": string,
+     "Static GK": string,
+     "Tags": string,
+     "Source": string (either the original JSON row or the text paragraph)
+   }
+3. The "answer" field MUST be a bulleted list of 2-5 facts, with each bullet prefixed with "• " and separated by newlines \\n (e.g., "• Fact one\\n• Fact two"). Do not output markdown code blocks.
 
 Input Data:
 `;
