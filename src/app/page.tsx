@@ -35,6 +35,8 @@ export default function Dashboard() {
   
   // Form State
   const [deckName, setDeckName] = useState('')
+  const [uploadMode, setUploadMode] = useState<'create' | 'append'>('create')
+  const [selectedDeckId, setSelectedDeckId] = useState<string>('')
   const [isCsv, setIsCsv] = useState(true)
   const [textInput, setTextInput] = useState('')
   const [csvFile, setCsvFile] = useState<File | null>(null)
@@ -61,6 +63,9 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json()
         setDecks(data)
+        if (data.length > 0) {
+          setSelectedDeckId(prev => prev || data[0].id)
+        }
       }
     } catch (err) {
       console.error('Failed to fetch decks:', err)
@@ -136,7 +141,10 @@ export default function Dashboard() {
       chunks.push(rows.slice(i, i + chunkSize))
     }
 
-    let activeDeckId: string | null = null
+    let activeDeckId: string | null = uploadMode === 'append' ? selectedDeckId : null
+    const targetName = uploadMode === 'append' 
+      ? (decks.find(d => d.id === selectedDeckId)?.name || deckName) 
+      : deckName
 
     try {
       for (let index = 0; index < chunks.length; index++) {
@@ -150,7 +158,7 @@ export default function Dashboard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            deckName,
+            deckName: targetName,
             isCsv: true,
             chunk: chunkStr,
             provider,
@@ -200,7 +208,10 @@ export default function Dashboard() {
       chunks.push(paragraphs.slice(i, i + chunkSize))
     }
 
-    let activeDeckId: string | null = null
+    let activeDeckId: string | null = uploadMode === 'append' ? selectedDeckId : null
+    const targetName = uploadMode === 'append' 
+      ? (decks.find(d => d.id === selectedDeckId)?.name || deckName) 
+      : deckName
 
     try {
       for (let index = 0; index < chunks.length; index++) {
@@ -214,7 +225,7 @@ export default function Dashboard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            deckName,
+            deckName: targetName,
             isCsv: false,
             chunk: chunkStr,
             provider,
@@ -251,8 +262,13 @@ export default function Dashboard() {
     e.preventDefault()
     setErrorMsg('')
 
-    if (!deckName.trim()) {
+    if (uploadMode === 'create' && !deckName.trim()) {
       setErrorMsg('Please enter a stack name.')
+      return
+    }
+
+    if (uploadMode === 'append' && !selectedDeckId) {
+      setErrorMsg('Please select a target stack to append to.')
       return
     }
 
@@ -311,16 +327,71 @@ export default function Dashboard() {
 
           <form onSubmit={handleUploadSubmit} className="flex flex-col gap-6">
             <div className={styles.formGroup}>
-              <label>Stack Name (Unique identifier)</label>
-              <input 
-                type="text" 
-                placeholder="e.g., Biology Part 2, AWS Core Concepts"
-                value={deckName}
-                onChange={(e) => setDeckName(e.target.value)}
-                disabled={uploading}
-                className={styles.inputField}
-              />
+              <label>Stack Mode</label>
+              <div className={styles.tabs}>
+                <button
+                  type="button"
+                  className={`${styles.tab} ${uploadMode === 'create' ? styles.activeTab : ''}`}
+                  onClick={() => setUploadMode('create')}
+                  disabled={uploading}
+                >
+                  New Stack
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.tab} ${uploadMode === 'append' ? styles.activeTab : ''}`}
+                  onClick={() => {
+                    setUploadMode('append')
+                    if (decks.length > 0 && !selectedDeckId) {
+                      setSelectedDeckId(decks[0].id)
+                    }
+                  }}
+                  disabled={uploading || decks.length === 0}
+                  title={decks.length === 0 ? "You must have at least one deck to append to!" : ""}
+                >
+                  Add to Existing
+                </button>
+              </div>
             </div>
+
+            {uploadMode === 'create' ? (
+              <div className={styles.formGroup}>
+                <label>Stack Name (Unique identifier)</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g., Biology Part 2, AWS Core Concepts"
+                  value={deckName}
+                  onChange={(e) => setDeckName(e.target.value)}
+                  disabled={uploading}
+                  className={styles.inputField}
+                />
+              </div>
+            ) : (
+              <div className={styles.formGroup}>
+                <label>Select Target Stack</label>
+                <select
+                  value={selectedDeckId}
+                  onChange={(e) => setSelectedDeckId(e.target.value)}
+                  disabled={uploading}
+                  className={styles.inputField}
+                  style={{
+                    background: 'rgba(15, 23, 42, 0.6)',
+                    color: '#fff',
+                    border: '1px solid var(--accent-glow)',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    outline: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {decks.map((d) => (
+                    <option key={d.id} value={d.id} style={{ background: '#1e293b', color: '#fff' }}>
+                      {d.name} ({d.totalCards} cards)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className={styles.formGroup}>
               <label>Input Format</label>
@@ -387,7 +458,7 @@ export default function Dashboard() {
                   onClick={() => setProvider('gemini')}
                   disabled={uploading}
                 >
-                  Google Gemini (1.5 Flash)
+                  Google Gemini (2.5 Flash)
                 </button>
                 <button
                   type="button"
@@ -395,7 +466,7 @@ export default function Dashboard() {
                   onClick={() => setProvider('groq')}
                   disabled={uploading}
                 >
-                  Groq (Llama-3-70b)
+                  Groq (Llama-3.3-70b)
                 </button>
               </div>
             </div>
