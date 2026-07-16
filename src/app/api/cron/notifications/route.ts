@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { checkAndSendNotifications } from '@/lib/scheduler'
+import { checkAndSendNotifications, processSpacedRepetitionReviews } from '@/lib/scheduler'
 import { getOrCreateDefaultUser } from '@/lib/user'
 import { sendEmail } from '@/lib/email'
 import { prisma } from '@/lib/db'
@@ -83,6 +83,7 @@ export async function GET(req: Request) {
     }
 
     // Standard cron behavior
+    await processSpacedRepetitionReviews()
     await checkAndSendNotifications()
     return NextResponse.json({ success: true, message: 'Cron notifications check completed.' })
   } catch (err: any) {

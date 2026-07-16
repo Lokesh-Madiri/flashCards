@@ -22,13 +22,16 @@ model User {
 }
 
 model Deck {
-  id           String        @id @default(uuid())
-  name         String        // User-provided name for this block
-  createdAt    DateTime      @default(now())
-  userId       String
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cards        Card[]
-  quizAttempts QuizAttempt[]
+  id                 String        @id @default(uuid())
+  name               String        // User-provided name for this block
+  createdAt          DateTime      @default(now())
+  userId             String
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards              Card[]
+  quizAttempts       QuizAttempt[]
+  lastCompletedAt    DateTime?
+  reviewIntervalStep Int           @default(0)
+  nextReviewAt       DateTime?
 }
 
 model Card {

@@ -16,6 +16,7 @@ export function startNotificationScheduler() {
   // Run every minute
   cron.schedule('* * * * *', async () => {
     try {
+      await processSpacedRepetitionReviews()
       await checkAndSendNotifications()
     } catch (err) {
       console.error('[Scheduler] Error running notification check:', err)
@@ -166,6 +167,65 @@ export async function checkAndSendNotifications() {
           console.log(`[Scheduler] Notification logged and user updated for ${user.email}.`)
         }
       }
+    }
+  }
+}
+
+export async function processSpacedRepetitionReviews() {
+  const now = new Date()
+  const pendingDecks = await prisma.deck.findMany({
+    where: {
+      nextReviewAt: {
+        lte: now,
+      },
+    },
+    include: {
+      user: true,
+    },
+  })
+
+  if (pendingDecks.length === 0) return
+
+  console.log(`[SpacedRepetition] Found ${pendingDecks.length} decks due for spaced repetition review.`)
+
+  for (const deck of pendingDecks) {
+    // 1. Reset all cards in the deck to needsRepeat = true so it shows revision not completed
+    await prisma.card.updateMany({
+      where: { deckId: deck.id },
+      data: { needsRepeat: true },
+    })
+
+    // 2. Clear nextReviewAt so we don't process it again
+    await prisma.deck.update({
+      where: { id: deck.id },
+      data: { nextReviewAt: null },
+    })
+
+    // 3. Send the notification email to the user
+    try {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+      const reviewUrl = `${appUrl}/deck/${deck.id}/study`
+      const emailHtml = `
+        <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <h2 style="color: #4f46e5; margin-bottom: 16px;">Spaced Repetition Review Required 🔔</h2>
+          <p>Hi ${deck.user.name || 'Student'},</p>
+          <p>It's time to revise your study deck: <strong>${deck.name}</strong>.</p>
+          <p>Consistent active-recall at spaced intervals is key to long-term memory retention. All cards in this stack have been reset to active study mode.</p>
+          <div style="margin: 24px 0;">
+            <a href="${reviewUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Start Revision Session</a>
+          </div>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+          <p style="font-size: 12px; color: #64748b;">This is an automated notification from your Smart Flashcards & MCQ Platform.</p>
+        </div>
+      `
+      await sendEmail({
+        to: deck.user.email,
+        subject: `🔔 Spaced Repetition: Time to review "${deck.name}"`,
+        html: emailHtml,
+      })
+      console.log(`[SpacedRepetition] Sent review alert to ${deck.user.email} for deck "${deck.name}"`)
+    } catch (emailErr) {
+      console.error(`[SpacedRepetition] Failed to send review alert for deck "${deck.name}":`, emailErr)
     }
   }
 }

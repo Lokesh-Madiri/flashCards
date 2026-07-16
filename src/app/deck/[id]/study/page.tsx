@@ -49,6 +49,13 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
     loadDeck()
   }, [deckId])
 
+  useEffect(() => {
+    if (cards.length > 0 && activeQueue.length === 0 && initialActiveCount > 0) {
+      fetch(`/api/decks/${deckId}/complete`, { method: 'POST' })
+        .catch(err => console.error('Failed to report deck completion:', err))
+    }
+  }, [activeQueue.length, cards.length, deckId, initialActiveCount])
+
   const loadDeck = async () => {
     try {
       setLoading(true)
