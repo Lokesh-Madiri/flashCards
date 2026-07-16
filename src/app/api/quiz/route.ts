@@ -21,39 +21,91 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'deckId parameter is required.' }, { status: 400 })
     }
 
+    // Count previous quiz attempts for this deck to increase questions dynamically
+    const attemptCount = await prisma.quizAttempt.count({
+      where: { deckId }
+    })
+    
+    // limit starts at 20, then 30 (20 current + 10 previous), then 40, etc.
+    const limit = 20 + attemptCount * 10
+
+    // Fetch cards ordered by creation date DESC
     const cards = await prisma.card.findMany({
       where: { deckId },
+      orderBy: { createdAt: 'desc' }
     })
 
     if (cards.length === 0) {
       return NextResponse.json([])
     }
 
-    // Get list of all unique answers in this deck to use as distractors
-    const allAnswers = Array.from(new Set(cards.map(c => c.answer)))
+    // Slice to the computed limit
+    const selectedCards = cards.slice(0, Math.min(cards.length, limit))
 
-    const quizQuestions = cards.map((card) => {
-      const correctAnswer = card.answer
-      
-      // Filter out the correct answer to get candidates for distractors
-      let distractorCandidates = allAnswers.filter(a => a.toLowerCase() !== correctAnswer.toLowerCase())
+    const quizQuestions = selectedCards.map((card) => {
+      let options: string[] = []
+      let correctAnswer = card.answer
+      let useMcq = false
+      let mcqQuestionText = card.question
 
-      // Shuffle candidates and pick 3
-      distractorCandidates = shuffleArray(distractorCandidates)
-      const distractors = distractorCandidates.slice(0, 3)
+      // Try parsing originalRow metadata for pre-generated MCQ
+      let parsedRow: any = null
+      try {
+        parsedRow = JSON.parse(card.originalRow)
+      } catch (e) {}
 
-      // Fallback distractors if there are not enough cards in the deck
-      while (distractors.length < 3) {
-        const fallbacks = ['Not Applicable', 'None of the above', 'False', 'True', 'Unknown']
-        const nextFallback = fallbacks.find(f => !distractors.includes(f) && f.toLowerCase() !== correctAnswer.toLowerCase()) || 'N/A'
-        distractors.push(nextFallback)
+      if (
+        parsedRow &&
+        parsedRow['MCQ Question'] &&
+        Array.isArray(parsedRow['MCQ Options']) &&
+        parsedRow['MCQ Options'].length === 4
+      ) {
+        const mcqQ = parsedRow['MCQ Question']
+        const mcqOpts = parsedRow['MCQ Options']
+        const correctLetter = (parsedRow['MCQ Correct Answer'] || '').trim().toLowerCase()
+
+        // Find which option matches the correct letter (e.g. "b) PSLV-C57" corresponds to "b")
+        let mcqCorrect = ''
+        for (const opt of mcqOpts) {
+          const cleanedOpt = opt.trim().toLowerCase()
+          if (
+            cleanedOpt.startsWith(`${correctLetter})`) ||
+            cleanedOpt.startsWith(`${correctLetter}.`) ||
+            cleanedOpt.startsWith(`${correctLetter} `)
+          ) {
+            mcqCorrect = opt
+            break
+          }
+        }
+
+        if (!mcqCorrect) {
+          mcqCorrect = mcqOpts.find((o: string) => o.trim().toLowerCase().startsWith(correctLetter)) || mcqOpts[0]
+        }
+
+        mcqQuestionText = mcqQ
+        options = mcqOpts
+        correctAnswer = mcqCorrect
+        useMcq = true
+      } else {
+        // Fallback distractor generation
+        const allAnswers = Array.from(new Set(cards.map(c => c.answer)))
+        let distractorCandidates = allAnswers.filter(a => a.toLowerCase() !== correctAnswer.toLowerCase())
+
+        distractorCandidates = shuffleArray(distractorCandidates)
+        const distractors = distractorCandidates.slice(0, 3)
+
+        while (distractors.length < 3) {
+          const fallbacks = ['Not Applicable', 'None of the above', 'False', 'True', 'Unknown']
+          const nextFallback = fallbacks.find(f => !distractors.includes(f) && f.toLowerCase() !== correctAnswer.toLowerCase()) || 'N/A'
+          distractors.push(nextFallback)
+        }
+
+        options = shuffleArray([correctAnswer, ...distractors])
       }
-
-      const options = shuffleArray([correctAnswer, ...distractors])
 
       return {
         id: card.id,
-        question: card.question,
+        question: mcqQuestionText,
         options,
         correctAnswer,
         originalRow: card.originalRow,

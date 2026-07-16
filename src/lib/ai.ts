@@ -5,53 +5,59 @@ export interface CardGenerationOutput {
 }
 
 const GENERATION_PROMPT = (isCsv: boolean) => `
-You are an expert AFCAT exam educational tutor.
-Convert the provided input data ${isCsv ? '(which represents a JSON-serialized chunk of CSV rows)' : '(which represents a segment of plain text)'} into a set of high-quality study cards tailored for the AFCAT (Air Force Common Admission Test).
+You are an expert AFCAT (Air Force Common Admission Test) exam paper setter and educational tutor.
+Your core task is to process input data ${isCsv ? '(a JSON-serialized chunk of CSV rows)' : '(a segment of plain text)'} and convert it into a set of high-yield study cards based on the "Static-Current Hybridization" methodology.
 
-For each news item or row extracted:
-1. Identify the main topic.
-2. Extract only exam-relevant facts.
-3. Classify into exactly one of these categories:
-   - Defence & Military
-   - Government Schemes
-   - Reports & Indices
-   - International Organisations
-   - Science & Technology
-   - Environment
-   - Geography
-   - Economy & Banking
-   - Awards & Appointments
-   - Miscellaneous
-4. Assign AFCAT priority:
-   ★★★★★ Extremely Important
-   ★★★★☆ Important
-   ★★★☆☆ Moderate
-   ★★☆☆☆ Low
-   ★☆☆☆☆ Very Low
-5. Extract any hidden Static GK that AFCAT could ask.
-6. Generate one Q&A card where:
-   - "question" (Front): Exam-style question.
-   - "answer" (Back): Answer in 2–5 bullets (using the bullet character "• " and separated by newlines \\n).
-7. Add tags (e.g., Defence, ISRO, Economy, Environment).
-8. Do not include speeches, opinions, political rhetoric, or details that have no exam value. Keep each card self-contained and answerable in under 30 seconds.
+CRITICAL METHODOLOGY (Static-Current Hybridization):
+1. AFCAT rarely asks raw current affairs. Instead, it uses current affairs triggers from the past 6 months to ask associated STATIC, HISTORICAL, GEOGRAPHICAL, SCIENTIFIC, or INSTITUTIONAL facts ("Static Anchors").
+2. Do NOT summarize the news event itself. Instead, identify the news event, find all its potential "Static Anchors" (e.g. for Aditya-L1, the static anchors are Launch Vehicle, Orbit, Lagrange Point, Mission Objective; for a new Ramsar Site, the static anchors are State, Nearest National Park, River Basin).
+3. Do NOT force a single card per news item. Generate MULTIPLE cards for a single news event if multiple important static anchors exist. Generate one card for each high-probability static anchor.
+4. Think like an AFCAT paper setter: "If AFCAT wants to test this news event, what static fact is it most likely to ask?"
 
-Rules:
+AFCAT CATEGORIES & PRIORITIES:
+Classify each card into exactly one of these 10 prioritized categories:
+- Defence (★★★★★)
+- ISRO & Space (★★★★★)
+- Awards (★★★★★)
+- Defence Exercises (★★★★★)
+- Reports & International Organisations (★★★★★)
+- Government Schemes (★★★★☆)
+- Environment (★★★★☆)
+- Geography (★★★★☆)
+- Economy (★★★☆☆)
+- Miscellaneous (★★☆☆☆)
+
+AFCAT QUESTION TEMPLATES:
+Choose the template that best matches the target question:
+Location, Headquarters, Launch Vehicle, Mission Objective, Exercise Venue, Exercise Participants, Award Winner, Award Category, Manufacturer, Shipyard, River, State, National Park, Scientific Principle, Ministry, Organisation, Treaty Members, Satellite, Rocket, Species, Full Form, Technology.
+
+TWO-LEVEL PROBABILITY MATRIX:
+1. Topic Probability: How likely is this news topic to be asked in AFCAT? (Defence exercises and ISRO missions are ★★★★★; minor economy metrics are ★☆☆☆☆).
+2. Fact Probability: How likely is this specific static anchor of the topic to be asked? (e.g., launch vehicle class is ★★★★★; mission cost or launch date is ★★☆☆☆ or ★☆☆☆☆).
+
+RULES:
 1. The response MUST be a valid JSON array of objects matching this TypeScript type:
    Array<{
-     question: string;
-     answer: string;
-     originalRow: string;
+     question: string; // The front of the card: a clear, concise exam-style question testing the static anchor
+     answer: string;   // The back of the card: a bulleted list of 2-5 key facts about the static anchor (prefixed with "• " and separated by \\n)
+     originalRow: string; // Stringified JSON object containing the metadata fields listed below
    }>
-2. To preserve the metadata, the "originalRow" field MUST be a stringified JSON object containing these exact keys:
+2. The "originalRow" field MUST be a stringified JSON object containing these exact keys:
    {
-     "Main Topic": string,
-     "Category": string,
-     "AFCAT Priority": string,
-     "Static GK": string,
-     "Tags": string,
-     "Source": string (either the original JSON row or the text paragraph)
+     "Main Topic": string (the underlying news event / topic name),
+     "Category": string (one of the 10 prioritized categories above),
+     "Question Template": string (one of the question templates above),
+     "Static Anchor": string (the specific static anchor being queried),
+     "Topic Probability": string (star rating e.g. "★★★★★" to "★☆☆☆☆"),
+     "Fact Probability": string (star rating e.g. "★★★★★" to "★☆☆☆☆"),
+     "Tags": string (comma-separated tags),
+     "Source": string (the source text / row context),
+     "Reason": string (1-2 sentence explanation of why this specific static anchor is highly likely to be asked),
+     "MCQ Question": string (one high-quality AFCAT-style MCQ question testing this static anchor),
+     "MCQ Options": string[] (exactly 4 options, starting with "a) ", "b) ", "c) ", "d) "),
+     "MCQ Correct Answer": string (only the letter "a", "b", "c", or "d"),
+     "MCQ Explanation": string (detailed explanation of the correct answer and static context)
    }
-3. The "answer" field MUST be a bulleted list of 2-5 facts, with each bullet prefixed with "• " and separated by newlines \\n (e.g., "• Fact one\\n• Fact two"). Do not output markdown code blocks.
 
 Input Data:
 `;

@@ -252,7 +252,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const progressPct = Math.round(((currentIdx) / questions.length) * 100)
 
   // Parse Metadata CSV row for displaying below question
-  let parsedRow: Record<string, string> | null = null
+  let parsedRow: Record<string, any> | null = null
   let isJson = false
   try {
     const parsed = JSON.parse(currentQ.originalRow)
@@ -261,7 +261,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
       isJson = true
     }
   } catch (e) {
-    // Keep parsedRow null, it will display as raw string
+    // Keep parsedRow null
   }
 
   return (
@@ -331,6 +331,42 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
         </div>
 
         {isAnswered && (
+          <div className={styles.explanationBox}>
+            <h4 className={styles.explanationTitle}>AFCAT Explanation & Study Context:</h4>
+            {parsedRow && parsedRow['MCQ Explanation'] ? (
+              <p className={styles.explanationText}>{parsedRow['MCQ Explanation']}</p>
+            ) : (
+              <p className={styles.explanationText}>The correct answer is: {currentQ.correctAnswer}.</p>
+            )}
+            
+            {parsedRow && (
+              <div className={styles.quizMetadataGrid}>
+                {parsedRow['Category'] && (
+                  <div>
+                    <strong>Category:</strong> {parsedRow['Category']}
+                  </div>
+                )}
+                {parsedRow['Question Template'] && (
+                  <div>
+                    <strong>Template:</strong> {parsedRow['Question Template']}
+                  </div>
+                )}
+                {parsedRow['Static Anchor'] && (
+                  <div>
+                    <strong>Static Anchor:</strong> <span style={{ color: '#38bdf8' }}>{parsedRow['Static Anchor']}</span> {parsedRow['Fact Probability'] && `(${parsedRow['Fact Probability']})`}
+                  </div>
+                )}
+                {parsedRow['Reason'] && (
+                  <div style={{ gridColumn: 'span 2' }}>
+                    <strong>AFCAT Focus Reason:</strong> <span style={{ color: '#cbd5e1' }}>{parsedRow['Reason']}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {isAnswered && (
           <div className={styles.footer}>
             <button 
               onClick={handleNext} 
@@ -363,7 +399,9 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                 {Object.entries(parsedRow).map(([key, val]) => (
                   <div key={key} style={{ display: 'contents' }}>
                     <span className={styles.metaLabel}>{key}:</span>
-                    <span className={styles.metaValue}>{val}</span>
+                    <span className={styles.metaValue}>
+                      {typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val)}
+                    </span>
                   </div>
                 ))}
               </div>

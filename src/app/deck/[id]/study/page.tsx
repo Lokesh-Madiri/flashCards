@@ -267,7 +267,11 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
 
   const tagsList = getTags()
   const category = parsedRow ? (parsedRow['Category'] || parsedRow['category'] || '') : ''
-  const priority = parsedRow ? (parsedRow['AFCAT Priority'] || parsedRow['afcatPriority'] || parsedRow['Priority'] || '') : ''
+  const qTemplate = parsedRow ? (parsedRow['Question Template'] || parsedRow['questionTemplate'] || '') : ''
+  const topicProb = parsedRow ? (parsedRow['Topic Probability'] || parsedRow['topicProbability'] || parsedRow['AFCAT Priority'] || parsedRow['Priority'] || '') : ''
+  const staticAnchor = parsedRow ? (parsedRow['Static Anchor'] || parsedRow['staticAnchor'] || '') : ''
+  const factProb = parsedRow ? (parsedRow['Fact Probability'] || parsedRow['factProbability'] || '') : ''
+  const reason = parsedRow ? (parsedRow['Reason'] || parsedRow['reason'] || '') : ''
   const staticGk = parsedRow ? (parsedRow['Static GK'] || parsedRow['staticGk'] || parsedRow['static_gk'] || '') : ''
   const sourceContext = parsedRow ? (parsedRow['Source'] || parsedRow['source'] || '') : ''
 
@@ -311,7 +315,8 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
               <span className={styles.cardLabel}>Question</span>
               <div className={styles.tagBadgeContainer}>
                 {category && <span className={styles.categoryBadge}>{category}</span>}
-                {priority && <span className={styles.priorityBadge}>{priority}</span>}
+                {qTemplate && <span className={styles.templateBadge}>{qTemplate}</span>}
+                {topicProb && <span className={styles.priorityBadge}>Topic: {topicProb}</span>}
               </div>
             </div>
             
@@ -335,8 +340,18 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
             <span className={styles.cardLabel}>Answer</span>
             <p className={styles.answerText}>{currentCard.answer}</p>
             
-            {(staticGk || sourceContext) && (
+            {(staticAnchor || factProb || reason || staticGk || sourceContext) && (
               <div className={styles.cardBackMetadata} onClick={(e) => e.stopPropagation()}>
+                {staticAnchor && (
+                  <div className={styles.metadataItem}>
+                    <strong>Static Anchor:</strong> <span className={styles.highlightText}>{staticAnchor}</span> {factProb && <span className={styles.factProbBadge}>Fact Prob: {factProb}</span>}
+                  </div>
+                )}
+                {reason && (
+                  <div className={styles.metadataItem}>
+                    <strong>AFCAT Focus Reason:</strong> <span style={{ color: '#e2e8f0' }}>{reason}</span>
+                  </div>
+                )}
                 {staticGk && (
                   <div className={styles.metadataItem}>
                     <strong>Static GK:</strong> {typeof staticGk === 'object' ? JSON.stringify(staticGk) : String(staticGk)}
