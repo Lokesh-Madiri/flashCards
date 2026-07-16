@@ -243,7 +243,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   const currentCard = activeQueue[0]
   
   // Attempt to parse metadata (CSV originalRow)
-  let parsedRow: Record<string, string> | null = null
+  let parsedRow: Record<string, any> | null = null
   let isJson = false
   try {
     const parsed = JSON.parse(currentCard.originalRow)
@@ -252,8 +252,24 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
       isJson = true
     }
   } catch (e) {
-    // Keep parsedRow null, it will fall back to raw string
+    // Keep parsedRow null
   }
+
+  const getTags = (): string[] => {
+    if (!parsedRow) return []
+    const rawTags = parsedRow['Tags'] || parsedRow['tags'] || parsedRow['Tag'] || parsedRow['tag'] || ''
+    if (Array.isArray(rawTags)) return rawTags
+    if (typeof rawTags === 'string') {
+      return rawTags.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+    }
+    return []
+  }
+
+  const tagsList = getTags()
+  const category = parsedRow ? (parsedRow['Category'] || parsedRow['category'] || '') : ''
+  const priority = parsedRow ? (parsedRow['AFCAT Priority'] || parsedRow['afcatPriority'] || parsedRow['Priority'] || '') : ''
+  const staticGk = parsedRow ? (parsedRow['Static GK'] || parsedRow['staticGk'] || parsedRow['static_gk'] || '') : ''
+  const sourceContext = parsedRow ? (parsedRow['Source'] || parsedRow['source'] || '') : ''
 
   const studyProgress = initialActiveCount > 0 
     ? Math.round((completedCount / initialActiveCount) * 100) 
@@ -291,7 +307,22 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
           
           {/* Card Front */}
           <div className={styles.cardFront}>
-            <span className={styles.cardLabel}>Question</span>
+            <div className={styles.cardHeader}>
+              <span className={styles.cardLabel}>Question</span>
+              <div className={styles.tagBadgeContainer}>
+                {category && <span className={styles.categoryBadge}>{category}</span>}
+                {priority && <span className={styles.priorityBadge}>{priority}</span>}
+              </div>
+            </div>
+            
+            {tagsList.length > 0 && (
+              <div className={styles.tagsContainer}>
+                {tagsList.map((tag, idx) => (
+                  <span key={idx} className={styles.tagPill}>#{tag}</span>
+                ))}
+              </div>
+            )}
+            
             <p className={styles.questionText}>{currentCard.question}</p>
             <span className={styles.hint}>
               <HelpCircle size={14} />
@@ -303,6 +334,22 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
           <div className={styles.cardBack}>
             <span className={styles.cardLabel}>Answer</span>
             <p className={styles.answerText}>{currentCard.answer}</p>
+            
+            {(staticGk || sourceContext) && (
+              <div className={styles.cardBackMetadata} onClick={(e) => e.stopPropagation()}>
+                {staticGk && (
+                  <div className={styles.metadataItem}>
+                    <strong>Static GK:</strong> {typeof staticGk === 'object' ? JSON.stringify(staticGk) : String(staticGk)}
+                  </div>
+                )}
+                {sourceContext && (
+                  <div className={styles.metadataItem}>
+                    <strong>Source Context:</strong> {typeof sourceContext === 'object' ? JSON.stringify(sourceContext) : String(sourceContext)}
+                  </div>
+                )}
+              </div>
+            )}
+            
             <span className={styles.hint}>
               <span>Click card to show question</span>
             </span>
@@ -337,37 +384,6 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
                 No (Mastered)
               </button>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* Metadata Context Drawer */}
-      <div className={`${styles.metadataPanel} glass-panel`}>
-        <div 
-          className={styles.metadataHeader} 
-          onClick={() => setShowMetadata(!showMetadata)}
-        >
-          <h4>
-            <Database size={16} />
-            <span>CSV Source Metadata Context</span>
-          </h4>
-          {showMetadata ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </div>
-        
-        {showMetadata && (
-          <div className={styles.metadataContent}>
-            {isJson && parsedRow ? (
-              <div className={styles.metadataGrid}>
-                {Object.entries(parsedRow).map(([key, val]) => (
-                  <div key={key} style={{ display: 'contents' }}>
-                    <span className={styles.metaLabel}>{key}:</span>
-                    <span className={styles.metaValue}>{val}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className={styles.metaValue}>{currentCard.originalRow}</p>
-            )}
           </div>
         )}
       </div>
