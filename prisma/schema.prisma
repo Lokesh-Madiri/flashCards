@@ -58,3 +58,30 @@ model QuizAttempt {
   correctQ  Int      // Correct answers
   createdAt DateTime @default(now())
 }
+
+model PdfIngestionJob {
+  id          String     @id @default(uuid())
+  deckId      String
+  filename    String
+  fileHash    String     @unique // SHA-256 hash of file content to prevent duplicate ingestion
+  status      String     @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  totalPages  Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  chunks      PdfChunk[]
+}
+
+model PdfChunk {
+  id           String          @id @default(uuid())
+  jobId        String
+  job          PdfIngestionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  chunkIndex   Int
+  startPage    Int
+  endPage      Int
+  status       String          @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  lockedBy     String?         // ID of worker processing this chunk
+  lockedAt     DateTime?
+  error        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}

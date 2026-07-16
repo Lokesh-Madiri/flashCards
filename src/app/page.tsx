@@ -37,9 +37,10 @@ export default function Dashboard() {
   const [deckName, setDeckName] = useState('')
   const [uploadMode, setUploadMode] = useState<'create' | 'append'>('create')
   const [selectedDeckId, setSelectedDeckId] = useState<string>('')
-  const [isCsv, setIsCsv] = useState(true)
+  const [uploadFormat, setUploadFormat] = useState<'csv' | 'text' | 'pdf'>('csv')
   const [textInput, setTextInput] = useState('')
   const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [provider, setProvider] = useState<'gemini' | 'groq'>('gemini')
   
   // Inline rename state
@@ -77,7 +78,11 @@ export default function Dashboard() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0]
-      setCsvFile(file)
+      if (uploadFormat === 'pdf') {
+        setPdfFile(file)
+      } else {
+        setCsvFile(file)
+      }
       // Autofill deck name if empty
       if (!deckName) {
         const baseName = file.name.replace(/\.[^/.]+$/, "") // strip extension
@@ -257,6 +262,42 @@ export default function Dashboard() {
     }
   }
 
+  const uploadPdf = async (file: File) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('deckName', uploadMode === 'create' ? deckName : decks.find(d => d.id === selectedDeckId)?.name || 'AFCAT Deck')
+      if (uploadMode === 'append') {
+        formData.append('deckId', selectedDeckId)
+      }
+      formData.append('provider', provider)
+
+      const res = await fetch('/api/upload-pdf', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to upload PDF file.')
+      }
+
+      setProgressPercent(100)
+      setProgressMsg(data.message || 'PDF ingestion started in background.')
+      
+      setTimeout(() => {
+        setUploading(false)
+        setPdfFile(null)
+        setDeckName('')
+        fetchDecks()
+      }, 2500)
+    } catch (err: any) {
+      console.error(err)
+      setErrorMsg(err.message || 'An error occurred during PDF uploading.')
+      setUploading(false)
+    }
+  }
+
   // Handle uploading and chunked processing
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -272,22 +313,27 @@ export default function Dashboard() {
       return
     }
 
-    if (isCsv && !csvFile) {
+    if (uploadFormat === 'csv' && !csvFile) {
       setErrorMsg('Please select a CSV file.')
       return
     }
 
-    if (!isCsv && !textInput.trim()) {
+    if (uploadFormat === 'pdf' && !pdfFile) {
+      setErrorMsg('Please select a PDF document.')
+      return
+    }
+
+    if (uploadFormat === 'text' && !textInput.trim()) {
       setErrorMsg('Please enter some text context.')
       return
     }
 
     setUploading(true)
     setProgressPercent(0)
-    setProgressMsg('Starting file parsing...')
+    setProgressMsg('Starting file processing...')
 
     try {
-      if (isCsv && csvFile) {
+      if (uploadFormat === 'csv' && csvFile) {
         Papa.parse(csvFile, {
           header: true,
           skipEmptyLines: true,
@@ -299,6 +345,8 @@ export default function Dashboard() {
             setUploading(false)
           }
         })
+      } else if (uploadFormat === 'pdf' && pdfFile) {
+        await uploadPdf(pdfFile)
       } else {
         await uploadTextInChunks(textInput)
       }
@@ -398,24 +446,32 @@ export default function Dashboard() {
               <div className={styles.tabs}>
                 <button
                   type="button"
-                  className={`${styles.tab} ${isCsv ? styles.activeTab : ''}`}
-                  onClick={() => setIsCsv(true)}
+                  className={`${styles.tab} ${uploadFormat === 'csv' ? styles.activeTab : ''}`}
+                  onClick={() => setUploadFormat('csv')}
                   disabled={uploading}
                 >
                   CSV File
                 </button>
                 <button
                   type="button"
-                  className={`${styles.tab} ${!isCsv ? styles.activeTab : ''}`}
-                  onClick={() => setIsCsv(false)}
+                  className={`${styles.tab} ${uploadFormat === 'text' ? styles.activeTab : ''}`}
+                  onClick={() => setUploadFormat('text')}
                   disabled={uploading}
                 >
                   Raw Text
                 </button>
+                <button
+                  type="button"
+                  className={`${styles.tab} ${uploadFormat === 'pdf' ? styles.activeTab : ''}`}
+                  onClick={() => setUploadFormat('pdf')}
+                  disabled={uploading}
+                >
+                  PDF Document
+                </button>
               </div>
             </div>
 
-            {isCsv ? (
+            {uploadFormat === 'csv' && (
               <div className={styles.formGroup}>
                 <label>Select CSV File</label>
                 <label className={styles.fileDropzone}>
@@ -436,7 +492,9 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            ) : (
+            )}
+
+            {uploadFormat === 'text' && (
               <div className={styles.formGroup}>
                 <label>Enter Raw Text / Paragraphs</label>
                 <textarea
@@ -446,6 +504,29 @@ export default function Dashboard() {
                   disabled={uploading}
                   className={`${styles.inputField} ${styles.textareaField}`}
                 />
+              </div>
+            )}
+
+            {uploadFormat === 'pdf' && (
+              <div className={styles.formGroup}>
+                <label>Select PDF Document</label>
+                <label className={styles.fileDropzone}>
+                  <UploadCloud size={32} className={styles.iconPrimary} />
+                  <span>Click to browse and upload PDF</span>
+                  <input 
+                    type="file" 
+                    accept=".pdf"
+                    onChange={handleFileChange}
+                    disabled={uploading}
+                    className={styles.fileInput}
+                  />
+                </label>
+                {pdfFile && (
+                  <div className={styles.selectedFileInfo}>
+                    <FileText size={16} />
+                    <span>{pdfFile.name} ({(pdfFile.size / (1024 * 1024)).toFixed(2)} MB)</span>
+                  </div>
+                )}
               </div>
             )}
 
