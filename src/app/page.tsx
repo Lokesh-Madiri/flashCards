@@ -458,7 +458,7 @@ export default function Dashboard() {
                   onClick={() => setProvider('gemini')}
                   disabled={uploading}
                 >
-                  Google Gemini (2.5 Flash)
+                  Google Gemini (2.0 Flash)
                 </button>
                 <button
                   type="button"

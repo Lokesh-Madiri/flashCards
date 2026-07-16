@@ -56,6 +56,20 @@ Rules:
 Input Data:
 `;
 
+async function fetchWithRetry(url: string, options: RequestInit, retries = 3, delay = 3500): Promise<Response> {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status === 429) {
+      console.log(`[RateLimit] Status 429 detected. Retrying in ${delay / 1000}s... (Attempt ${i + 1}/${retries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 2; // exponential backoff
+      continue;
+    }
+    return res;
+  }
+  return fetch(url, options);
+}
+
 export async function generateCardsWithGemini(dataString: string, isCsv: boolean): Promise<CardGenerationOutput[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'placeholder_gemini_key') {
@@ -64,8 +78,8 @@ export async function generateCardsWithGemini(dataString: string, isCsv: boolean
 
   const prompt = GENERATION_PROMPT(isCsv) + '\n' + dataString;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const response = await fetchWithRetry(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -100,7 +114,7 @@ export async function generateCardsWithGroq(dataString: string, isCsv: boolean):
 
   const prompt = GENERATION_PROMPT(isCsv) + '\n' + dataString;
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const response = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -145,7 +159,6 @@ function parseJsonResponse(rawText: string): CardGenerationOutput[] {
     cleaned = cleaned.replace(/^```(json)?/, '').replace(/```$/, '').trim();
   }
 
-  // Some LLMs wrap the array inside an object (e.g. { "cards": [...] } or similar) when forced to json_object
   try {
     const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) {
