@@ -13,7 +13,9 @@ import {
   BookOpen, 
   Award,
   Database,
-  Sparkles
+  Sparkles,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react'
 import styles from './page.module.css'
 
@@ -82,6 +84,10 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   // Expand metadata state
   const [showMetadata, setShowMetadata] = useState(false)
   const [lastPromptedMilestone, setLastPromptedMilestone] = useState(0)
+
+  // Card fix/report state
+  const [fixingCardId, setFixingCardId] = useState<string | null>(null)
+  const [fixMsg, setFixMsg] = useState<{ id: string; text: string; success: boolean } | null>(null)
 
   useEffect(() => {
     loadDeck()
@@ -165,6 +171,43 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
       setActiveQueue(activeQueue.slice(1))
       setCompletedCount(prev => prev + 1)
     }, 200)
+  }
+
+  /**
+   * Report a card as grammatically wrong and ask AI to fix it in-place.
+   */
+  const handleFixCard = async (card: Card, mode: 'grammar' | 'regenerate') => {
+    setFixingCardId(card.id)
+    setFixMsg(null)
+    try {
+      const res = await fetch('/api/fix-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId: card.id, provider: 'gemini', mode }),
+      })
+      const data = await res.json()
+      if (res.ok && data.card) {
+        // Hot-swap the card content in the active queue without a page reload
+        setActiveQueue(prev => prev.map(c =>
+          c.id === card.id
+            ? { ...c, question: data.card.question, answer: data.card.answer }
+            : c
+        ))
+        setCards(prev => prev.map(c =>
+          c.id === card.id
+            ? { ...c, question: data.card.question, answer: data.card.answer }
+            : c
+        ))
+        const label = mode === 'regenerate' ? 'regenerated' : 'grammar-fixed'
+        setFixMsg({ id: card.id, text: `✅ Card ${label}! Showing updated version.`, success: true })
+      } else {
+        setFixMsg({ id: card.id, text: `❌ Failed: ${data.error || 'Unknown error'}`, success: false })
+      }
+    } catch (err: any) {
+      setFixMsg({ id: card.id, text: `❌ Network error: ${err.message}`, success: false })
+    } finally {
+      setFixingCardId(null)
+    }
   }
 
   if (loading) {
@@ -407,6 +450,57 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
               </div>
             )}
             
+            {/* Report & Fix Panel */}
+            <div onClick={(e) => e.stopPropagation()} style={{ marginTop: '14px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+              <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Report this card
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* Grammar / Clarity Fix */}
+                <button
+                  onClick={() => handleFixCard(currentCard, 'grammar')}
+                  disabled={!!fixingCardId}
+                  title="Fix grammatical errors and unclear phrasing only"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.35)',
+                    color: '#fbbf24', borderRadius: '8px', padding: '5px 11px',
+                    fontSize: '0.71rem', cursor: fixingCardId ? 'wait' : 'pointer',
+                    opacity: fixingCardId ? 0.5 : 1, transition: 'all 0.15s',
+                  }}
+                >
+                  {fixingCardId === currentCard.id
+                    ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Fixing...</>
+                    : <><AlertTriangle size={11} /> Grammar / Clarity</>}
+                </button>
+
+                {/* Theoretically wrong — full regeneration */}
+                <button
+                  onClick={() => handleFixCard(currentCard, 'regenerate')}
+                  disabled={!!fixingCardId}
+                  title="This question is factually wrong or unanswerable — regenerate a new card on the same topic"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.35)',
+                    color: '#f87171', borderRadius: '8px', padding: '5px 11px',
+                    fontSize: '0.71rem', cursor: fixingCardId ? 'wait' : 'pointer',
+                    opacity: fixingCardId ? 0.5 : 1, transition: 'all 0.15s',
+                  }}
+                >
+                  {fixingCardId === currentCard.id
+                    ? <><RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Regenerating...</>
+                    : <><RefreshCw size={11} /> Wrong / Unanswerable</>}
+                </button>
+
+                {/* Status message */}
+                {fixMsg?.id === currentCard.id && (
+                  <span style={{ fontSize: '0.71rem', color: fixMsg.success ? '#4ade80' : '#f87171' }}>
+                    {fixMsg.text}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <span className={styles.hint}>
               <span>Click card to show question</span>
             </span>

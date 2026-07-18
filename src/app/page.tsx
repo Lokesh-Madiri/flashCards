@@ -67,6 +67,13 @@ export default function Dashboard() {
     summary: string
   } | null>(null)
   const [showCoverageModal, setShowCoverageModal] = useState(false)
+  // Stores which missing topics the user has selected to re-generate
+  const [selectedMissingTopics, setSelectedMissingTopics] = useState<string[]>([])
+  // The deck ID and context text saved when coverage was run (to use for gap-fill generation)
+  const [coverageDeckId, setCoverageDeckId] = useState<string | null>(null)
+  const [coverageContext, setCoverageContext] = useState<string>('')
+  const [generatingMissing, setGeneratingMissing] = useState(false)
+  const [missingGenMsg, setMissingGenMsg] = useState('')
 
   useEffect(() => {
     fetchDecks()
@@ -273,8 +280,8 @@ export default function Dashboard() {
 
       // --- COVERAGE OVERVIEW (Feature 2) ---
       // Only send the first 2000 words to avoid hitting Vercel's 4.5MB body limit
+      const truncatedForCoverage = words.slice(0, 2000).join(' ')
       try {
-        const truncatedForCoverage = words.slice(0, 2000).join(' ')
         const coverageRes = await fetch('/api/coverage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -287,6 +294,10 @@ export default function Dashboard() {
         if (coverageRes.ok) {
           const report = await coverageRes.json()
           setCoverageReport(report)
+          // Save context + deck so user can generate gap-fill cards from the modal
+          setCoverageDeckId(activeDeckId)
+          setCoverageContext(truncatedForCoverage)
+          setSelectedMissingTopics(report.missing || [])  // pre-select all by default
           setShowCoverageModal(true)
         }
       } catch (covErr) {
@@ -307,6 +318,57 @@ export default function Dashboard() {
       console.error(err)
       setErrorMsg(err.message || 'An error occurred during AI processing.')
       setUploading(false)
+    }
+  }
+
+  /**
+   * For each selected missing topic, send a focused prompt to the AI to generate
+   * targeted flashcards and append them directly to the same deck.
+   */
+  const generateForMissingTopics = async () => {
+    if (!coverageDeckId || selectedMissingTopics.length === 0) return
+    setGeneratingMissing(true)
+    setMissingGenMsg('')
+
+    try {
+      for (let i = 0; i < selectedMissingTopics.length; i++) {
+        const topic = selectedMissingTopics[i]
+        setMissingGenMsg(`Generating cards for missing topic ${i + 1}/${selectedMissingTopics.length}: "${topic}"...`)
+
+        // Build a targeted prompt using the original context + the specific missing topic
+        const focusedChunk = [
+          `TOPIC TO FOCUS ON: ${topic}`,
+          ``,
+          `CONTEXT FROM STUDY MATERIAL:`,
+          coverageContext,
+          ``,
+          `INSTRUCTION: Generate AFCAT-focused flashcards specifically and exclusively about "${topic}" based on the context above. Prioritise static anchors, key facts, dates, and definitions related to this topic.`,
+        ].join('\n')
+
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deckName: 'gap-fill',   // ignored when deckId is provided
+            isCsv: false,
+            chunk: focusedChunk,
+            provider,
+            deckId: coverageDeckId,
+          }),
+        })
+
+        if (!res.ok) {
+          const errData: any = await res.json()
+          console.warn(`Gap-fill failed for "${topic}":`, errData.error)
+        }
+      }
+
+      setMissingGenMsg(`✅ Done! Generated targeted cards for ${selectedMissingTopics.length} missing topic${selectedMissingTopics.length > 1 ? 's' : ''}. Your deck is now more complete!`)
+      fetchDecks()
+    } catch (err: any) {
+      setMissingGenMsg(`❌ Error: ${err.message}`)
+    } finally {
+      setGeneratingMissing(false)
     }
   }
 
@@ -446,8 +508,8 @@ export default function Dashboard() {
             background: 'linear-gradient(135deg, #0f172a, #1e293b)',
             border: '1px solid rgba(99,102,241,0.4)',
             borderRadius: '16px', padding: '32px',
-            maxWidth: '620px', width: '100%',
-            maxHeight: '85vh', overflowY: 'auto'
+            maxWidth: '640px', width: '100%',
+            maxHeight: '90vh', overflowY: 'auto'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
               <div>
@@ -479,7 +541,7 @@ export default function Dashboard() {
               <p style={{ marginTop: '12px', fontSize: '0.9rem', color: '#e2e8f0' }}>{coverageReport.summary}</p>
             </div>
 
-            {/* Topic breakdown */}
+            {/* Well Covered */}
             {coverageReport.wellCovered.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <h4 style={{ color: '#4ade80', margin: '0 0 8px', fontSize: '0.85rem' }}>✅ Well Covered ({coverageReport.wellCovered.length})</h4>
@@ -491,6 +553,7 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* Partially Covered */}
             {coverageReport.partiallyCovered.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <h4 style={{ color: '#fbbf24', margin: '0 0 8px', fontSize: '0.85rem' }}>⚠️ Partially Covered ({coverageReport.partiallyCovered.length})</h4>
@@ -502,19 +565,78 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* ❌ Missing — INTERACTIVE CLICKABLE CHIPS */}
             {coverageReport.missing.length > 0 && (
-              <div style={{ marginBottom: '24px' }}>
-                <h4 style={{ color: '#f87171', margin: '0 0 8px', fontSize: '0.85rem' }}>❌ Potentially Missing ({coverageReport.missing.length})</h4>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {coverageReport.missing.map((t, i) => (
-                    <span key={i} style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '12px', padding: '3px 10px', fontSize: '0.75rem' }}>{t}</span>
-                  ))}
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ color: '#f87171', margin: 0, fontSize: '0.85rem' }}>❌ Potentially Missing ({coverageReport.missing.length})</h4>
+                  <button
+                    onClick={() => setSelectedMissingTopics(
+                      selectedMissingTopics.length === coverageReport.missing.length ? [] : [...coverageReport.missing]
+                    )}
+                    style={{ background: 'none', border: '1px solid rgba(248,113,113,0.4)', color: '#f87171', borderRadius: '8px', padding: '3px 10px', fontSize: '0.72rem', cursor: 'pointer' }}
+                  >
+                    {selectedMissingTopics.length === coverageReport.missing.length ? 'Deselect All' : 'Select All'}
+                  </button>
                 </div>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Click topics below to select them, then generate targeted flashcards for the gaps.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {coverageReport.missing.map((t, i) => {
+                    const isSelected = selectedMissingTopics.includes(t)
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setSelectedMissingTopics(prev =>
+                          prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]
+                        )}
+                        style={{
+                          background: isSelected ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.07)',
+                          color: isSelected ? '#fca5a5' : '#f87171',
+                          border: isSelected ? '1.5px solid #f87171' : '1px solid rgba(239,68,68,0.3)',
+                          borderRadius: '14px', padding: '5px 12px', fontSize: '0.75rem',
+                          cursor: 'pointer', transition: 'all 0.15s ease',
+                          fontWeight: isSelected ? 600 : 400,
+                          boxShadow: isSelected ? '0 0 8px rgba(239,68,68,0.25)' : 'none',
+                        }}
+                      >
+                        {isSelected ? '✓ ' : '+ '}{t}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Generate button for selected missing topics */}
+                {selectedMissingTopics.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <button
+                      onClick={generateForMissingTopics}
+                      disabled={generatingMissing}
+                      className="btn-primary"
+                      style={{ width: '100%', opacity: generatingMissing ? 0.7 : 1, cursor: generatingMissing ? 'wait' : 'pointer' }}
+                    >
+                      {generatingMissing
+                        ? '⏳ Generating...'
+                        : `🧠 Generate Cards for ${selectedMissingTopics.length} Selected Topic${selectedMissingTopics.length > 1 ? 's' : ''}`
+                      }
+                    </button>
+                    {missingGenMsg && (
+                      <p style={{ marginTop: '10px', fontSize: '0.8rem', color: missingGenMsg.startsWith('✅') ? '#4ade80' : missingGenMsg.startsWith('❌') ? '#f87171' : '#94a3b8', textAlign: 'center' }}>
+                        {missingGenMsg}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
-            <button onClick={() => setShowCoverageModal(false)} className="btn-primary" style={{ width: '100%' }}>
-              Got it — View My Flashcards
+            <button
+              onClick={() => { setShowCoverageModal(false); setMissingGenMsg('') }}
+              className="btn-primary"
+              style={{ width: '100%', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)' }}
+            >
+              Close — View My Flashcards
             </button>
           </div>
         </div>
