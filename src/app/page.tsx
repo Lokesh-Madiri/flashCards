@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Papa from 'papaparse'
@@ -43,6 +43,10 @@ export default function Dashboard() {
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [provider, setProvider] = useState<'gemini' | 'groq'>('gemini')
+
+  // Uncontrolled ref for the raw text textarea — avoids React re-render lag with huge pastes
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [wordCount, setWordCount] = useState(0)
   
   // Inline rename state
   const [editingDeckId, setEditingDeckId] = useState<string | null>(null)
@@ -268,12 +272,14 @@ export default function Dashboard() {
       setProgressMsg(`Done! Running coverage audit on ${words.length.toLocaleString()} words...`)
 
       // --- COVERAGE OVERVIEW (Feature 2) ---
+      // Only send the first 2000 words to avoid hitting Vercel's 4.5MB body limit
       try {
+        const truncatedForCoverage = words.slice(0, 2000).join(' ')
         const coverageRes = await fetch('/api/coverage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            originalText: text,
+            originalText: truncatedForCoverage,
             cardQuestions: generatedQuestions,
             provider,
           }),
@@ -293,6 +299,8 @@ export default function Dashboard() {
         setDeckName('')
         setTextInput('')
         setYoutubeUrl('')
+        setWordCount(0)
+        if (textareaRef.current) textareaRef.current.value = ''
         fetchDecks()
       }, 1500)
     } catch (err: any) {
@@ -363,7 +371,7 @@ export default function Dashboard() {
       return
     }
 
-    if (uploadFormat === 'text' && !textInput.trim()) {
+    if (uploadFormat === 'text' && !(textareaRef.current?.value || '').trim()) {
       setErrorMsg('Please enter some text context.')
       return
     }
@@ -389,7 +397,9 @@ export default function Dashboard() {
         await uploadPdf(pdfFile)
       } else {
         // Feature 3: If YouTube URL provided, fetch transcript and merge with pasted text
-        let combinedText = textInput
+        // Read directly from the uncontrolled ref to get the full text without state lag
+        const rawText = textareaRef.current?.value || ''
+        let combinedText = rawText
         if (youtubeUrl.trim()) {
           setProgressMsg('Fetching YouTube captions...')
           try {
@@ -400,7 +410,7 @@ export default function Dashboard() {
             })
             const transcribeData = await transcribeRes.json()
             if (transcribeRes.ok && transcribeData.transcript) {
-              combinedText = textInput + '\n\n--- YouTube Transcript ---\n\n' + transcribeData.transcript
+              combinedText = rawText + '\n\n--- YouTube Transcript ---\n\n' + transcribeData.transcript
               setProgressMsg(`YouTube captions extracted (${transcribeData.wordCount?.toLocaleString()} words). Processing combined sources...`)
             } else {
               setProgressMsg(`YouTube captions unavailable: ${transcribeData.error}. Processing text only...`)
@@ -642,13 +652,27 @@ export default function Dashboard() {
 
             {uploadFormat === 'text' && (
               <div className={styles.formGroup}>
-                <label>Enter Raw Text / Paragraphs</label>
+                <label>
+                  Enter Raw Text / Paragraphs
+                  {wordCount > 0 && (
+                    <span style={{ marginLeft: '10px', fontSize: '0.75rem', color: wordCount > 5000 ? '#4ade80' : 'var(--text-muted)', fontWeight: 400 }}>
+                      {wordCount.toLocaleString()} words{wordCount > 800 ? ` → ~${Math.ceil((wordCount - 150) / (800 - 150))} AI chunks` : ''}
+                    </span>
+                  )}
+                </label>
                 <textarea
-                  placeholder="Paste textbook sections, definitions, or study notes here..."
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
+                  ref={textareaRef}
+                  placeholder="Paste any amount of text — thousands of words, entire chapters, lecture notes. The sliding window chunker handles it all automatically..."
+                  defaultValue=""
+                  onInput={(e) => {
+                    const val = (e.target as HTMLTextAreaElement).value
+                    // Debounce word count update so large pastes don't block the UI
+                    const wc = val.trim() ? val.trim().split(/\s+/).length : 0
+                    setWordCount(wc)
+                  }}
                   disabled={uploading}
                   className={`${styles.inputField} ${styles.textareaField}`}
+                  style={{ minHeight: '180px' }}
                 />
                 <div style={{ marginTop: '10px' }}>
                   <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>

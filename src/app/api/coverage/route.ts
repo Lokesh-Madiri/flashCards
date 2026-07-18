@@ -1,4 +1,8 @@
 import { NextResponse } from 'next/server'
+
+// Extend Vercel serverless timeout to 60s for the AI coverage audit call
+export const maxDuration = 60
+
 import { generateCardsWithGemini, generateCardsWithGroq } from '@/lib/ai'
 
 const COVERAGE_PROMPT = `You are an expert knowledge auditor. You will be given:
