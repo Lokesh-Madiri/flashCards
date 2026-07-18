@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getOrCreateDefaultUser } from '@/lib/user'
 
-// Helper to shuffle an array in place
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array]
   for (let i = arr.length - 1; i > 0; i--) {
@@ -12,160 +11,176 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr
 }
 
-function sortCardsByGroupAndPriority(cards: any[]): any[] {
-  const getPriorityWeight = (priorityStr: string): number => {
-    if (!priorityStr) return 0;
-    if (priorityStr.includes('★★★★★')) return 5;
-    if (priorityStr.includes('★★★★☆')) return 4;
-    if (priorityStr.includes('★★★☆☆')) return 3;
-    if (priorityStr.includes('★★☆☆☆')) return 2;
-    if (priorityStr.includes('★☆☆☆☆')) return 1;
-    return 0;
-  };
+function getPriorityWeight(priorityStr: string): number {
+  if (!priorityStr) return 0
+  if (priorityStr.includes('★★★★★')) return 5
+  if (priorityStr.includes('★★★★☆')) return 4
+  if (priorityStr.includes('★★★☆☆')) return 3
+  if (priorityStr.includes('★★☆☆☆')) return 2
+  if (priorityStr.includes('★☆☆☆☆')) return 1
+  return 0
+}
 
-  const mapped = cards.map(card => {
-    let category = 'Miscellaneous';
-    let priority = 0;
-    try {
-      const parsed = JSON.parse(card.originalRow);
-      if (parsed) {
-        category = parsed['Category'] || parsed['category'] || 'Miscellaneous';
-        const priStr = parsed['AFCAT Priority'] || parsed['afcatPriority'] || parsed['Priority'] || '';
-        priority = getPriorityWeight(priStr);
+function parseCardMeta(card: any): { category: string; priority: number } {
+  let category = 'Miscellaneous'
+  let priority = 0
+  try {
+    const parsed = JSON.parse(card.originalRow)
+    if (parsed) {
+      category = parsed['Category'] || parsed['category'] || 'Miscellaneous'
+      const priStr = parsed['Topic Probability'] || parsed['AFCAT Priority'] || parsed['Priority'] || ''
+      priority = getPriorityWeight(priStr)
+    }
+  } catch (e) {}
+  return { category, priority }
+}
+
+/**
+ * Build adaptive quiz questions from a card list.
+ * Pulls AI-embedded MCQ if present, otherwise generates distractors from the deck.
+ */
+function buildQuizQuestion(card: any, allCards: any[]): any {
+  let options: string[] = []
+  let correctAnswer = card.answer
+  let mcqQuestionText = card.question
+  let useMcq = false
+
+  let parsedRow: any = null
+  try { parsedRow = JSON.parse(card.originalRow) } catch (e) {}
+
+  if (
+    parsedRow &&
+    parsedRow['MCQ Question'] &&
+    Array.isArray(parsedRow['MCQ Options']) &&
+    parsedRow['MCQ Options'].length === 4
+  ) {
+    const mcqQ = parsedRow['MCQ Question']
+    const mcqOpts = parsedRow['MCQ Options']
+    const correctLetter = (parsedRow['MCQ Correct Answer'] || '').trim().toLowerCase()
+
+    let mcqCorrect = ''
+    for (const opt of mcqOpts) {
+      const cleanedOpt = opt.trim().toLowerCase()
+      if (
+        cleanedOpt.startsWith(`${correctLetter})`) ||
+        cleanedOpt.startsWith(`${correctLetter}.`) ||
+        cleanedOpt.startsWith(`${correctLetter} `)
+      ) {
+        mcqCorrect = opt
+        break
       }
-    } catch (e) {}
-    return { card, category, priority };
-  });
+    }
+    if (!mcqCorrect) {
+      mcqCorrect = mcqOpts.find((o: string) => o.trim().toLowerCase().startsWith(correctLetter)) || mcqOpts[0]
+    }
 
-  mapped.sort((a, b) => {
-    const catCompare = a.category.localeCompare(b.category);
-    if (catCompare !== 0) return catCompare;
-    return b.priority - a.priority;
-  });
+    mcqQuestionText = mcqQ
+    options = mcqOpts
+    correctAnswer = mcqCorrect
+    useMcq = true
+  } else {
+    const allAnswers = Array.from(new Set(allCards.map((c: any) => c.answer)))
+    let distractorCandidates = shuffleArray(
+      allAnswers.filter((a: any) => a.toLowerCase() !== correctAnswer.toLowerCase())
+    )
+    const distractors = distractorCandidates.slice(0, 3)
+    while (distractors.length < 3) {
+      const fallbacks = ['Not Applicable', 'None of the above', 'False', 'Unknown']
+      const next = fallbacks.find(f => !distractors.includes(f) && f.toLowerCase() !== correctAnswer.toLowerCase()) || 'N/A'
+      distractors.push(next)
+    }
+    options = shuffleArray([correctAnswer, ...distractors])
+  }
 
-  return mapped.map(item => item.card);
+  return {
+    id: card.id,
+    question: mcqQuestionText,
+    options,
+    correctAnswer,
+    originalRow: card.originalRow,
+    isWeak: card.wrongInQuiz === true,
+    needsRepeat: card.needsRepeat === true,
+  }
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const deckId = searchParams.get('deckId')
-    const progressStr = searchParams.get('progress')
 
     if (!deckId) {
       return NextResponse.json({ error: 'deckId parameter is required.' }, { status: 400 })
     }
 
-    // Fetch all cards in the deck
-    const cardsRaw = await prisma.card.findMany({
-      where: { deckId }
+    // Fetch ALL cards in the deck with knowledge state fields
+    const allCards = await prisma.card.findMany({
+      where: { deckId },
+      select: {
+        id: true,
+        question: true,
+        answer: true,
+        originalRow: true,
+        state: true,
+        needsRepeat: true,
+        wrongInQuiz: true,
+      }
     })
 
-    if (cardsRaw.length === 0) {
+    if (allCards.length === 0) {
       return NextResponse.json([])
     }
 
-    // Sort cards exactly as we do in Study Mode
-    const sortedCards = sortCardsByGroupAndPriority(cardsRaw)
+    // --- ADAPTIVE KNOWLEDGE-STATE ENGINE ---
+    // Bucket 1: Weak cards (answered wrong in previous quiz) — ALWAYS include all of them
+    const weakCards = allCards.filter(c => c.wrongInQuiz === true)
 
-    let selectedCards: any[] = []
-    const N = progressStr ? parseInt(progressStr, 10) : NaN
+    // Bucket 2: Unseen / needs-repeat cards (not yet mastered) — sorted by priority, take up to 15
+    const repeatCards = allCards
+      .filter(c => c.needsRepeat === true && c.wrongInQuiz !== true)
+      .map(c => ({ card: c, ...parseCardMeta(c) }))
+      .sort((a, b) => b.priority - a.priority)       // highest priority first
+      .map(x => x.card)
 
-    if (!isNaN(N) && N >= 20) {
-      // 1. Current chunk: cards studied in the last 20 block (indices N - 20 to N - 1)
-      const currentSlice = sortedCards.slice(Math.max(0, N - 20), Math.min(sortedCards.length, N))
-      selectedCards.push(...currentSlice)
+    // Bucket 3: Mastered cards — take high-priority ones for retention (up to 10)
+    const masteredCards = allCards
+      .filter(c => c.needsRepeat === false && c.wrongInQuiz !== true)
+      .map(c => ({ card: c, ...parseCardMeta(c) }))
+      .sort((a, b) => b.priority - a.priority)
+      .map(x => x.card)
 
-      // 2. Previous chunk: 10 random cards from the previous block (indices N - 40 to N - 21)
-      if (N >= 40) {
-        const prevSlice = sortedCards.slice(Math.max(0, N - 40), N - 20)
-        const shuffledPrev = shuffleArray(prevSlice)
-        selectedCards.push(...shuffledPrev.slice(0, 10))
-      }
+    // Build dynamic quiz: all weak + up to 15 repeat + up to 10 mastered high-priority
+    const quizPool: any[] = [
+      ...weakCards,
+      ...repeatCards.slice(0, 15),
+      ...masteredCards.slice(0, 10),
+    ]
 
-      // 3. Older chunks: 10 random cards from all older blocks combined (indices 0 to N - 41)
-      if (N >= 60) {
-        const olderSlice = sortedCards.slice(0, N - 40)
-        const shuffledOlder = shuffleArray(olderSlice)
-        selectedCards.push(...shuffledOlder.slice(0, 10))
-      }
-    } else {
-      // Default fallback (e.g. deck finished or no progress milestone): load all sorted cards
-      selectedCards = sortedCards
+    // Guarantee minimum 10 questions even if pool is small
+    if (quizPool.length < 10 && allCards.length >= 10) {
+      const existingIds = new Set(quizPool.map(c => c.id))
+      const extras = shuffleArray(allCards.filter(c => !existingIds.has(c.id)))
+      quizPool.push(...extras.slice(0, 10 - quizPool.length))
+    } else if (quizPool.length < 10) {
+      // Deck has fewer than 10 cards total — use all
+      const existingIds = new Set(quizPool.map(c => c.id))
+      allCards.filter(c => !existingIds.has(c.id)).forEach(c => quizPool.push(c))
     }
 
-    const quizQuestions = selectedCards.map((card) => {
-      let options: string[] = []
-      let correctAnswer = card.answer
-      let useMcq = false
-      let mcqQuestionText = card.question
+    // Cap at 40 to keep quiz manageable
+    const selectedCards = quizPool.slice(0, 40)
 
-      // Try parsing originalRow metadata for pre-generated MCQ
-      let parsedRow: any = null
-      try {
-        parsedRow = JSON.parse(card.originalRow)
-      } catch (e) {}
+    // Build MCQ quiz questions
+    const quizQuestions = selectedCards.map(card => buildQuizQuestion(card, allCards))
 
-      if (
-        parsedRow &&
-        parsedRow['MCQ Question'] &&
-        Array.isArray(parsedRow['MCQ Options']) &&
-        parsedRow['MCQ Options'].length === 4
-      ) {
-        const mcqQ = parsedRow['MCQ Question']
-        const mcqOpts = parsedRow['MCQ Options']
-        const correctLetter = (parsedRow['MCQ Correct Answer'] || '').trim().toLowerCase()
-
-        // Find which option matches the correct letter (e.g. "b) PSLV-C57" corresponds to "b")
-        let mcqCorrect = ''
-        for (const opt of mcqOpts) {
-          const cleanedOpt = opt.trim().toLowerCase()
-          if (
-            cleanedOpt.startsWith(`${correctLetter})`) ||
-            cleanedOpt.startsWith(`${correctLetter}.`) ||
-            cleanedOpt.startsWith(`${correctLetter} `)
-          ) {
-            mcqCorrect = opt
-            break
-          }
-        }
-
-        if (!mcqCorrect) {
-          mcqCorrect = mcqOpts.find((o: string) => o.trim().toLowerCase().startsWith(correctLetter)) || mcqOpts[0]
-        }
-
-        mcqQuestionText = mcqQ
-        options = mcqOpts
-        correctAnswer = mcqCorrect
-        useMcq = true
-      } else {
-        // Fallback distractor generation using the main deck list
-        const allAnswers = Array.from(new Set(sortedCards.map(c => c.answer)))
-        let distractorCandidates = allAnswers.filter(a => a.toLowerCase() !== correctAnswer.toLowerCase())
-
-        distractorCandidates = shuffleArray(distractorCandidates)
-        const distractors = distractorCandidates.slice(0, 3)
-
-        while (distractors.length < 3) {
-          const fallbacks = ['Not Applicable', 'None of the above', 'False', 'True', 'Unknown']
-          const nextFallback = fallbacks.find(f => !distractors.includes(f) && f.toLowerCase() !== correctAnswer.toLowerCase()) || 'N/A'
-          distractors.push(nextFallback)
-        }
-
-        options = shuffleArray([correctAnswer, ...distractors])
-      }
-
-      return {
-        id: card.id,
-        question: mcqQuestionText,
-        options,
-        correctAnswer,
-        originalRow: card.originalRow,
+    return NextResponse.json({
+      questions: shuffleArray(quizQuestions),
+      meta: {
+        total: quizQuestions.length,
+        weakCount: weakCards.length,
+        repeatCount: Math.min(repeatCards.length, 15),
+        masteredCount: Math.min(masteredCards.length, 10),
       }
     })
-
-    // Shuffle the quiz questions list
-    return NextResponse.json(shuffleArray(quizQuestions))
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
@@ -180,7 +195,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'deckId is required.' }, { status: 400 })
     }
 
-    // Create the Quiz Attempt
     const attempt = await prisma.quizAttempt.create({
       data: {
         deckId,
@@ -191,12 +205,10 @@ export async function POST(req: Request) {
       },
     })
 
-    // Reset wrong cards so they appear in the flashcard repeat stack again
+    // Mark wrong cards for extra repetition
     if (Array.isArray(wrongCardIds) && wrongCardIds.length > 0) {
       await prisma.card.updateMany({
-        where: {
-          id: { in: wrongCardIds },
-        },
+        where: { id: { in: wrongCardIds } },
         data: {
           needsRepeat: true,
           wrongInQuiz: true,
@@ -205,24 +217,19 @@ export async function POST(req: Request) {
       })
     }
 
-    // Mark correctly answered cards as cleared from being wrong in quiz
-    const cardsInDeck = await prisma.card.findMany({
+    // Clear wrongInQuiz flag for correctly answered cards
+    const allCardsInDeck = await prisma.card.findMany({
       where: { deckId },
       select: { id: true },
     })
-    
-    const correctCardIds = cardsInDeck
+    const correctCardIds = allCardsInDeck
       .map(c => c.id)
-      .filter(id => !wrongCardIds.includes(id))
+      .filter(id => !(wrongCardIds || []).includes(id))
 
     if (correctCardIds.length > 0) {
       await prisma.card.updateMany({
-        where: {
-          id: { in: correctCardIds },
-        },
-        data: {
-          wrongInQuiz: false,
-        },
+        where: { id: { in: correctCardIds } },
+        data: { wrongInQuiz: false },
       })
     }
 

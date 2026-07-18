@@ -33,6 +33,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const [deckName, setDeckName] = useState('')
   const [loading, setLoading] = useState(true)
   const [questions, setQuestions] = useState<Question[]>([])
+  const [quizMeta, setQuizMeta] = useState<{ total: number; weakCount: number; repeatCount: number; masteredCount: number } | null>(null)
   
   // Game states
   const [currentIdx, setCurrentIdx] = useState(0)
@@ -53,36 +54,33 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   // Expand metadata state
   const [showMetadata, setShowMetadata] = useState(false)
 
-  const [progressVal, setProgressVal] = useState<string | null>(null)
-
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const searchParams = new URLSearchParams(window.location.search)
-      const p = searchParams.get('progress')
-      setProgressVal(p)
-      loadQuiz(p)
-    }
+    loadQuiz()
   }, [deckId])
 
-  const loadQuiz = async (prog: string | null = null) => {
+  const loadQuiz = async () => {
     try {
       setLoading(true)
       
-      // Load deck info to get the name
       const decksRes = await fetch('/api/decks')
       if (decksRes.ok) {
         const decksData = await decksRes.json()
         const currentDeck = decksData.find((d: any) => d.id === deckId)
-        if (currentDeck) {
-          setDeckName(currentDeck.name)
-        }
+        if (currentDeck) setDeckName(currentDeck.name)
       }
 
-      // Load quiz questions
-      const quizRes = await fetch(`/api/quiz?deckId=${deckId}${prog ? `&progress=${prog}` : ''}`)
+      // Adaptive quiz — no progress param needed
+      const quizRes = await fetch(`/api/quiz?deckId=${deckId}`)
       if (quizRes.ok) {
         const data = await quizRes.json()
-        setQuestions(data)
+        // Handle new { questions, meta } shape
+        if (data.questions) {
+          setQuestions(data.questions)
+          setQuizMeta(data.meta || null)
+        } else {
+          // Backward-compat: flat array
+          setQuestions(Array.isArray(data) ? data : [])
+        }
       }
     } catch (err) {
       console.error('Failed to load quiz:', err)
@@ -296,6 +294,30 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           ></div>
         </div>
       </div>
+
+      {/* Adaptive Quiz Meta Banner */}
+      {quizMeta && (
+        <div style={{
+          display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px',
+          fontSize: '0.75rem', fontWeight: 600
+        }}>
+          {quizMeta.weakCount > 0 && (
+            <span style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+              🔴 {quizMeta.weakCount} Weak (Need Work)
+            </span>
+          )}
+          {quizMeta.repeatCount > 0 && (
+            <span style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+              🟡 {quizMeta.repeatCount} Unseen / Repeat
+            </span>
+          )}
+          {quizMeta.masteredCount > 0 && (
+            <span style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+              🟢 {quizMeta.masteredCount} Mastered (Retention)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Question Card */}
       <div className={`${styles.questionCard} glass-panel`}>

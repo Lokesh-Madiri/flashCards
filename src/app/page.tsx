@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [selectedDeckId, setSelectedDeckId] = useState<string>('')
   const [uploadFormat, setUploadFormat] = useState<'csv' | 'text' | 'pdf'>('csv')
   const [textInput, setTextInput] = useState('')
+  const [youtubeUrl, setYoutubeUrl] = useState('')
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [provider, setProvider] = useState<'gemini' | 'groq'>('gemini')
@@ -52,6 +53,16 @@ export default function Dashboard() {
   const [progressPercent, setProgressPercent] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+
+  // Coverage report state (Feature 2)
+  const [coverageReport, setCoverageReport] = useState<{
+    coverageScore: number
+    wellCovered: string[]
+    partiallyCovered: string[]
+    missing: string[]
+    summary: string
+  } | null>(null)
+  const [showCoverageModal, setShowCoverageModal] = useState(false)
 
   useEffect(() => {
     fetchDecks()
@@ -197,7 +208,6 @@ export default function Dashboard() {
 
   const uploadTextInChunks = async (text: string) => {
     // --- SLIDING WINDOW MAP-REDUCE CHUNKING ---
-    // Split entire text into words as the base unit
     const words = text.trim().split(/\s+/).filter(w => w.length > 0)
 
     if (words.length === 0) {
@@ -206,23 +216,24 @@ export default function Dashboard() {
       return
     }
 
-    const CHUNK_SIZE = 800   // Words per chunk sent to AI
-    const OVERLAP    = 150   // Words of sliding overlap to preserve sentence context
+    const CHUNK_SIZE = 800
+    const OVERLAP    = 150
 
-    // Build overlapping chunks
     const chunks: string[] = []
     let start = 0
     while (start < words.length) {
       const end = Math.min(start + CHUNK_SIZE, words.length)
       chunks.push(words.slice(start, end).join(' '))
       if (end === words.length) break
-      start += CHUNK_SIZE - OVERLAP  // Slide forward, keeping last OVERLAP words for context
+      start += CHUNK_SIZE - OVERLAP
     }
 
     let activeDeckId: string | null = uploadMode === 'append' ? selectedDeckId : null
     const targetName = uploadMode === 'append'
       ? (decks.find(d => d.id === selectedDeckId)?.name || deckName)
       : deckName
+
+    const generatedQuestions: string[] = []
 
     try {
       for (let index = 0; index < chunks.length; index++) {
@@ -254,11 +265,34 @@ export default function Dashboard() {
       }
 
       setProgressPercent(100)
-      setProgressMsg(`Done! Processed ${chunks.length} sliding window chunk${chunks.length > 1 ? 's' : ''} from ${words.length.toLocaleString()} words.`)
+      setProgressMsg(`Done! Running coverage audit on ${words.length.toLocaleString()} words...`)
+
+      // --- COVERAGE OVERVIEW (Feature 2) ---
+      try {
+        const coverageRes = await fetch('/api/coverage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            originalText: text,
+            cardQuestions: generatedQuestions,
+            provider,
+          }),
+        })
+        if (coverageRes.ok) {
+          const report = await coverageRes.json()
+          setCoverageReport(report)
+          setShowCoverageModal(true)
+        }
+      } catch (covErr) {
+        console.warn('Coverage audit failed (non-blocking):', covErr)
+      }
+
+      setProgressMsg(`Done! Processed ${chunks.length} chunk${chunks.length > 1 ? 's' : ''} from ${words.length.toLocaleString()} words.`)
       setTimeout(() => {
         setUploading(false)
         setDeckName('')
         setTextInput('')
+        setYoutubeUrl('')
         fetchDecks()
       }, 1500)
     } catch (err: any) {
@@ -354,7 +388,28 @@ export default function Dashboard() {
       } else if (uploadFormat === 'pdf' && pdfFile) {
         await uploadPdf(pdfFile)
       } else {
-        await uploadTextInChunks(textInput)
+        // Feature 3: If YouTube URL provided, fetch transcript and merge with pasted text
+        let combinedText = textInput
+        if (youtubeUrl.trim()) {
+          setProgressMsg('Fetching YouTube captions...')
+          try {
+            const transcribeRes = await fetch('/api/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ youtubeUrl: youtubeUrl.trim() }),
+            })
+            const transcribeData = await transcribeRes.json()
+            if (transcribeRes.ok && transcribeData.transcript) {
+              combinedText = textInput + '\n\n--- YouTube Transcript ---\n\n' + transcribeData.transcript
+              setProgressMsg(`YouTube captions extracted (${transcribeData.wordCount?.toLocaleString()} words). Processing combined sources...`)
+            } else {
+              setProgressMsg(`YouTube captions unavailable: ${transcribeData.error}. Processing text only...`)
+            }
+          } catch (ytErr) {
+            setProgressMsg('YouTube fetch failed. Processing text only...')
+          }
+        }
+        await uploadTextInChunks(combinedText)
       }
     } catch (err: any) {
       console.error(err)
@@ -369,6 +424,91 @@ export default function Dashboard() {
         <h1>Antigravity Recall Study Dashboard</h1>
         <p>Upload text or large CSV files to create micro-learning flashcard decks using Gemini and Groq.</p>
       </div>
+
+      {/* Coverage Report Modal (Feature 2) */}
+      {showCoverageModal && coverageReport && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #0f172a, #1e293b)',
+            border: '1px solid rgba(99,102,241,0.4)',
+            borderRadius: '16px', padding: '32px',
+            maxWidth: '620px', width: '100%',
+            maxHeight: '85vh', overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.3rem' }}>📊 Coverage Overview</h2>
+                <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  How well do the generated cards cover your source text?
+                </p>
+              </div>
+              <button onClick={() => setShowCoverageModal(false)} style={{
+                background: 'none', border: 'none', color: '#94a3b8',
+                cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1, padding: '4px'
+              }}>×</button>
+            </div>
+
+            {/* Score Ring */}
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+              <div style={{
+                display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
+                background: coverageReport.coverageScore >= 70
+                  ? 'rgba(34,197,94,0.1)' : coverageReport.coverageScore >= 40
+                  ? 'rgba(251,191,36,0.1)' : 'rgba(239,68,68,0.1)',
+                border: `2px solid ${coverageReport.coverageScore >= 70 ? '#22c55e' : coverageReport.coverageScore >= 40 ? '#fbbf24' : '#ef4444'}`,
+                borderRadius: '50%', width: '100px', height: '100px',
+                justifyContent: 'center'
+              }}>
+                <span style={{ fontSize: '1.8rem', fontWeight: 800 }}>{coverageReport.coverageScore}%</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Coverage</span>
+              </div>
+              <p style={{ marginTop: '12px', fontSize: '0.9rem', color: '#e2e8f0' }}>{coverageReport.summary}</p>
+            </div>
+
+            {/* Topic breakdown */}
+            {coverageReport.wellCovered.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ color: '#4ade80', margin: '0 0 8px', fontSize: '0.85rem' }}>✅ Well Covered ({coverageReport.wellCovered.length})</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {coverageReport.wellCovered.map((t, i) => (
+                    <span key={i} style={{ background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '12px', padding: '3px 10px', fontSize: '0.75rem' }}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {coverageReport.partiallyCovered.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ color: '#fbbf24', margin: '0 0 8px', fontSize: '0.85rem' }}>⚠️ Partially Covered ({coverageReport.partiallyCovered.length})</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {coverageReport.partiallyCovered.map((t, i) => (
+                    <span key={i} style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '12px', padding: '3px 10px', fontSize: '0.75rem' }}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {coverageReport.missing.length > 0 && (
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ color: '#f87171', margin: '0 0 8px', fontSize: '0.85rem' }}>❌ Potentially Missing ({coverageReport.missing.length})</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {coverageReport.missing.map((t, i) => (
+                    <span key={i} style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '12px', padding: '3px 10px', fontSize: '0.75rem' }}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button onClick={() => setShowCoverageModal(false)} className="btn-primary" style={{ width: '100%' }}>
+              Got it — View My Flashcards
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className={styles.sectionGrid}>
         
@@ -504,12 +644,31 @@ export default function Dashboard() {
               <div className={styles.formGroup}>
                 <label>Enter Raw Text / Paragraphs</label>
                 <textarea
-                  placeholder="Paste textbook sections, definitions, or study notes here. Double line breaks represent paragraph boundaries..."
+                  placeholder="Paste textbook sections, definitions, or study notes here..."
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   disabled={uploading}
                   className={`${styles.inputField} ${styles.textareaField}`}
                 />
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
+                    🎬 YouTube Video URL <span style={{ opacity: 0.6 }}>(Optional — captions will be merged with text above)</span>
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://youtube.com/watch?v=..."
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    disabled={uploading}
+                    className={styles.inputField}
+                    style={{ fontSize: '0.85rem' }}
+                  />
+                  {youtubeUrl.trim() && (
+                    <p style={{ fontSize: '0.72rem', color: '#a78bfa', marginTop: '4px' }}>
+                      ✅ Captions (Hindi+English auto) will be extracted and combined with your text.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
