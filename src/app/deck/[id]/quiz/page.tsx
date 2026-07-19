@@ -33,7 +33,14 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const [deckName, setDeckName] = useState('')
   const [loading, setLoading] = useState(true)
   const [questions, setQuestions] = useState<Question[]>([])
-  const [quizMeta, setQuizMeta] = useState<{ total: number; weakCount: number; repeatCount: number; masteredCount: number } | null>(null)
+  const [quizMeta, setQuizMeta] = useState<{
+    total: number
+    isMilestone: boolean
+    milestoneN: number | null
+    bucketA: number  // current batch
+    bucketB: number  // previous 5★ / repeat
+    bucketC: number  // previously missed
+  } | null>(null)
   
   // Game states
   const [currentIdx, setCurrentIdx] = useState(0)
@@ -55,10 +62,13 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const [showMetadata, setShowMetadata] = useState(false)
 
   useEffect(() => {
-    loadQuiz()
+    // Read progress milestone from URL (e.g. ?progress=40 means after studying 40 cards)
+    const searchParams = new URLSearchParams(window.location.search)
+    const prog = searchParams.get('progress')
+    loadQuiz(prog)
   }, [deckId])
 
-  const loadQuiz = async () => {
+  const loadQuiz = async (progress: string | null = null) => {
     try {
       setLoading(true)
       
@@ -69,16 +79,15 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
         if (currentDeck) setDeckName(currentDeck.name)
       }
 
-      // Adaptive quiz — no progress param needed
-      const quizRes = await fetch(`/api/quiz?deckId=${deckId}`)
+      // Pass progress milestone so the API applies the 3-bucket framework
+      const url = `/api/quiz?deckId=${deckId}${progress ? `&progress=${progress}` : ''}`
+      const quizRes = await fetch(url)
       if (quizRes.ok) {
         const data = await quizRes.json()
-        // Handle new { questions, meta } shape
         if (data.questions) {
           setQuestions(data.questions)
           setQuizMeta(data.meta || null)
         } else {
-          // Backward-compat: flat array
           setQuestions(Array.isArray(data) ? data : [])
         }
       }
@@ -295,26 +304,52 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
         </div>
       </div>
 
-      {/* Adaptive Quiz Meta Banner */}
+      {/* Quiz Meta Banner — shows composition of the quiz */}
       {quizMeta && (
         <div style={{
-          display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px',
-          fontSize: '0.75rem', fontWeight: 600
+          display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', fontSize: '0.73rem', fontWeight: 600
         }}>
-          {quizMeta.weakCount > 0 && (
-            <span style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
-              🔴 {quizMeta.weakCount} Weak (Need Work)
-            </span>
-          )}
-          {quizMeta.repeatCount > 0 && (
-            <span style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
-              🟡 {quizMeta.repeatCount} Unseen / Repeat
-            </span>
-          )}
-          {quizMeta.masteredCount > 0 && (
-            <span style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
-              🟢 {quizMeta.masteredCount} Mastered (Retention)
-            </span>
+          {quizMeta.isMilestone ? (
+            // Milestone quiz — 3-bucket framework labels
+            <>
+              <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+                📚 Milestone #{quizMeta.milestoneN ? quizMeta.milestoneN / 20 : '?'} · {quizMeta.total} Qs
+              </span>
+              {quizMeta.bucketA > 0 && (
+                <span style={{ background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🔵 {quizMeta.bucketA} Current Batch (5★ first)
+                </span>
+              )}
+              {quizMeta.bucketB > 0 && (
+                <span style={{ background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🟢 {quizMeta.bucketB} Prev ★★★★★ (Retention)
+                </span>
+              )}
+              {quizMeta.bucketC > 0 && (
+                <span style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🔴 {quizMeta.bucketC} Prev Missed
+                </span>
+              )}
+            </>
+          ) : (
+            // Free-form adaptive quiz labels
+            <>
+              {quizMeta.bucketA > 0 && (
+                <span style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🔴 {quizMeta.bucketA} Weak (Need Work)
+                </span>
+              )}
+              {quizMeta.bucketB > 0 && (
+                <span style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🟡 {quizMeta.bucketB} Unseen / Repeat
+                </span>
+              )}
+              {quizMeta.bucketC > 0 && (
+                <span style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '20px', padding: '4px 12px' }}>
+                  🟢 {quizMeta.bucketC} Mastered (Retention)
+                </span>
+              )}
+            </>
           )}
         </div>
       )}

@@ -107,13 +107,15 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const deckId = searchParams.get('deckId')
+    const progressStr = searchParams.get('progress')   // cards studied so far (multiple of 20)
 
     if (!deckId) {
       return NextResponse.json({ error: 'deckId parameter is required.' }, { status: 400 })
     }
 
-    // Fetch ALL cards in the deck with knowledge state fields
-    const allCards = await prisma.card.findMany({
+    // Fetch ALL cards sorted the same way the study page sorts them
+    // (so index positions map correctly to what the user actually studied)
+    const allCardsRaw = await prisma.card.findMany({
       where: { deckId },
       select: {
         id: true,
@@ -126,61 +128,113 @@ export async function GET(req: Request) {
       }
     })
 
-    if (allCards.length === 0) {
-      return NextResponse.json([])
+    if (allCardsRaw.length === 0) {
+      return NextResponse.json({ questions: [], meta: { total: 0, bucketA: 0, bucketB: 0, bucketC: 0 } })
     }
 
-    // --- ADAPTIVE KNOWLEDGE-STATE ENGINE ---
-    // Bucket 1: Weak cards (answered wrong in previous quiz) — ALWAYS include all of them
-    const weakCards = allCards.filter(c => c.wrongInQuiz === true)
+    // Sort cards exactly as the study page does (category asc, priority desc)
+    const sortedCards = [...allCardsRaw].sort((a, b) => {
+      const ma = parseCardMeta(a)
+      const mb = parseCardMeta(b)
+      const catCmp = ma.category.localeCompare(mb.category)
+      if (catCmp !== 0) return catCmp
+      return mb.priority - ma.priority
+    })
 
-    // Bucket 2: Unseen / needs-repeat cards (not yet mastered) — sorted by priority, take up to 15
-    const repeatCards = allCards
-      .filter(c => c.needsRepeat === true && c.wrongInQuiz !== true)
-      .map(c => ({ card: c, ...parseCardMeta(c) }))
-      .sort((a, b) => b.priority - a.priority)       // highest priority first
-      .map(x => x.card)
+    const N = progressStr ? parseInt(progressStr, 10) : NaN
+    const isMilestoneQuiz = !isNaN(N) && N >= 20
 
-    // Bucket 3: Mastered cards — take high-priority ones for retention (up to 10)
-    const masteredCards = allCards
-      .filter(c => c.needsRepeat === false && c.wrongInQuiz !== true)
-      .map(c => ({ card: c, ...parseCardMeta(c) }))
-      .sort((a, b) => b.priority - a.priority)
-      .map(x => x.card)
+    let selectedCards: any[]
+    let bucketMeta = { bucketA: 0, bucketB: 0, bucketC: 0 }
 
-    // Build dynamic quiz: all weak + up to 15 repeat + up to 10 mastered high-priority
-    const quizPool: any[] = [
-      ...weakCards,
-      ...repeatCards.slice(0, 15),
-      ...masteredCards.slice(0, 10),
-    ]
+    if (isMilestoneQuiz) {
+      // ================================================================
+      // 3-BUCKET MILESTONE FRAMEWORK
+      // Triggered every 20 cards (quiz 1 at N=20, quiz 2 at N=40, ...)
+      // ================================================================
 
-    // Guarantee minimum 10 questions even if pool is small
-    if (quizPool.length < 10 && allCards.length >= 10) {
-      const existingIds = new Set(quizPool.map(c => c.id))
-      const extras = shuffleArray(allCards.filter(c => !existingIds.has(c.id)))
-      quizPool.push(...extras.slice(0, 10 - quizPool.length))
-    } else if (quizPool.length < 10) {
-      // Deck has fewer than 10 cards total — use all
-      const existingIds = new Set(quizPool.map(c => c.id))
-      allCards.filter(c => !existingIds.has(c.id)).forEach(c => quizPool.push(c))
+      // Slice out the three regions
+      const currentBatch  = sortedCards.slice(Math.max(0, N - 20), Math.min(sortedCards.length, N))
+      const previousBatch = sortedCards.slice(0, Math.max(0, N - 20))
+
+      // --- BUCKET A: Current 20-card batch, 5★ first ---
+      const bucketA = [...currentBatch].sort((a, b) => {
+        const pa = parseCardMeta(a).priority
+        const pb = parseCardMeta(b).priority
+        return pb - pa   // highest priority first
+      })
+
+      // --- BUCKET B: Previous batches — ONLY ★★★★★ cards (priority 5), up to 10 ---
+      const bucketB = previousBatch
+        .map(c => ({ c, ...parseCardMeta(c) }))
+        .filter(x => x.priority === 5)          // strictly 5 stars only
+        .sort((a, b) => b.priority - a.priority)
+        .map(x => x.c)
+        .slice(0, 10)
+
+      // --- BUCKET C: Previously missed (wrongInQuiz=true) from all previous batches ---
+      const bucketC = previousBatch.filter(c => c.wrongInQuiz === true)
+
+      // Combine, deduplicate by id, preserve order (A → B → C)
+      const seen = new Set<string>()
+      const pool: any[] = []
+      for (const card of [...bucketA, ...bucketB, ...bucketC]) {
+        if (!seen.has(card.id)) {
+          seen.add(card.id)
+          pool.push(card)
+        }
+      }
+
+      bucketMeta = { bucketA: bucketA.length, bucketB: bucketB.length, bucketC: bucketC.length }
+      selectedCards = pool
+
+    } else {
+      // ================================================================
+      // FREE-FORM / END-OF-DECK ADAPTIVE ENGINE
+      // Used when navigating to /quiz directly (no progress milestone)
+      // ================================================================
+
+      const weakCards = sortedCards.filter(c => c.wrongInQuiz === true)
+      const repeatCards = sortedCards
+        .filter(c => c.needsRepeat === true && c.wrongInQuiz !== true)
+        .map(c => ({ card: c, ...parseCardMeta(c) }))
+        .sort((a, b) => b.priority - a.priority)
+        .map(x => x.card)
+      const masteredCards = sortedCards
+        .filter(c => c.needsRepeat === false && c.wrongInQuiz !== true)
+        .map(c => ({ card: c, ...parseCardMeta(c) }))
+        .sort((a, b) => b.priority - a.priority)
+        .map(x => x.card)
+
+      const pool: any[] = [
+        ...weakCards,
+        ...repeatCards.slice(0, 15),
+        ...masteredCards.slice(0, 10),
+      ]
+
+      // Ensure minimum 10
+      if (pool.length < 10) {
+        const existingIds = new Set(pool.map(c => c.id))
+        const extras = shuffleArray(sortedCards.filter(c => !existingIds.has(c.id)))
+        pool.push(...extras.slice(0, 10 - pool.length))
+      }
+
+      bucketMeta = { bucketA: weakCards.length, bucketB: repeatCards.slice(0,15).length, bucketC: masteredCards.slice(0,10).length }
+      selectedCards = pool.slice(0, 40)
     }
 
-    // Cap at 40 to keep quiz manageable
-    const selectedCards = quizPool.slice(0, 40)
-
-    // Build MCQ quiz questions
-    const quizQuestions = selectedCards.map(card => buildQuizQuestion(card, allCards))
+    const quizQuestions = selectedCards.map(card => buildQuizQuestion(card, allCardsRaw))
 
     return NextResponse.json({
-      questions: shuffleArray(quizQuestions),
+      questions: isMilestoneQuiz ? quizQuestions : shuffleArray(quizQuestions),
       meta: {
         total: quizQuestions.length,
-        weakCount: weakCards.length,
-        repeatCount: Math.min(repeatCards.length, 15),
-        masteredCount: Math.min(masteredCards.length, 10),
+        isMilestone: isMilestoneQuiz,
+        milestoneN: isMilestoneQuiz ? N : null,
+        ...bucketMeta,
       }
     })
+
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
