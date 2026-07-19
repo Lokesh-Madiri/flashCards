@@ -48,6 +48,9 @@ export async function POST(req: Request) {
       }
     } catch (aiErr: any) {
       console.error(`AI Generation error using ${selectedProvider}:`, aiErr)
+      if (aiErr.message === 'GROQ_ALL_KEYS_RATE_LIMITED') {
+        return NextResponse.json({ error: 'GROQ_ALL_KEYS_RATE_LIMITED' }, { status: 429 })
+      }
       return NextResponse.json({ error: `AI Generation failed: ${aiErr.message}` }, { status: 502 })
     }
 

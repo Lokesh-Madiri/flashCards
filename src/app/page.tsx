@@ -97,6 +97,44 @@ export default function Dashboard() {
     }
   }
 
+  /**
+   * Helper that executes the /api/upload request.
+   * If status is 429 (rate limit exceeded on all Groq keys), it pauses and runs a
+   * 20-minute (1200 seconds) client-side countdown timer, then automatically retries.
+   */
+  const fetchUploadWithRateLimitRetry = async (
+    body: any,
+    updateMsg: (msg: string) => void
+  ): Promise<any> => {
+    while (true) {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (res.status === 429) {
+        let retrySeconds = 20 * 60
+        while (retrySeconds > 0) {
+          const mins = Math.floor(retrySeconds / 60)
+          const secs = retrySeconds % 60
+          updateMsg(`⏳ Rate limit reached. All API keys exhausted. Pausing for ${mins}m ${secs}s before automatic retry...`)
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          retrySeconds--
+        }
+        updateMsg('Resuming chunk upload after rate limit cooldown...')
+        continue // Loop back and retry
+      }
+
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Server error uploading chunk')
+      }
+
+      return await res.json()
+    }
+  }
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0]
@@ -181,24 +219,14 @@ export default function Dashboard() {
         setProgressMsg(`Processing chunk ${index + 1} of ${chunks.length} (${chunkRows.length} rows)...`)
 
         const chunkStr = JSON.stringify(chunkRows)
-        const uploadRes: Response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deckName: targetName,
-            isCsv: true,
-            chunk: chunkStr,
-            provider,
-            deckId: activeDeckId,
-          }),
-        })
+        const uploadData = await fetchUploadWithRateLimitRetry({
+          deckName: targetName,
+          isCsv: true,
+          chunk: chunkStr,
+          provider,
+          deckId: activeDeckId,
+        }, (msg) => setProgressMsg(`[Chunk ${index + 1}/${chunks.length}] ${msg}`))
 
-        if (!uploadRes.ok) {
-          const errData: any = await uploadRes.json()
-          throw new Error(errData.error || 'Server error uploading chunk')
-        }
-
-        const uploadData: any = await uploadRes.json()
         activeDeckId = uploadData.deckId
       }
 
@@ -254,24 +282,14 @@ export default function Dashboard() {
           `Sliding window chunk ${index + 1} of ${chunks.length} (~${Math.round(chunks[index].split(' ').length)} words, ${OVERLAP}-word overlap)...`
         )
 
-        const textRes: Response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deckName: targetName,
-            isCsv: false,
-            chunk: chunks[index],
-            provider,
-            deckId: activeDeckId,
-          }),
-        })
+        const textData = await fetchUploadWithRateLimitRetry({
+          deckName: targetName,
+          isCsv: false,
+          chunk: chunks[index],
+          provider,
+          deckId: activeDeckId,
+        }, (msg) => setProgressMsg(`[Chunk ${index + 1}/${chunks.length}] ${msg}`))
 
-        if (!textRes.ok) {
-          const errData: any = await textRes.json()
-          throw new Error(errData.error || 'Server error uploading text chunk')
-        }
-
-        const textData: any = await textRes.json()
         activeDeckId = textData.deckId
       }
 
@@ -345,22 +363,13 @@ export default function Dashboard() {
           `INSTRUCTION: Generate AFCAT-focused flashcards specifically and exclusively about "${topic}" based on the context above. Prioritise static anchors, key facts, dates, and definitions related to this topic.`,
         ].join('\n')
 
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deckName: 'gap-fill',   // ignored when deckId is provided
-            isCsv: false,
-            chunk: focusedChunk,
-            provider,
-            deckId: coverageDeckId,
-          }),
-        })
-
-        if (!res.ok) {
-          const errData: any = await res.json()
-          console.warn(`Gap-fill failed for "${topic}":`, errData.error)
-        }
+        await fetchUploadWithRateLimitRetry({
+          deckName: 'gap-fill',   // ignored when deckId is provided
+          isCsv: false,
+          chunk: focusedChunk,
+          provider,
+          deckId: coverageDeckId,
+        }, (msg) => setMissingGenMsg(`[Topic ${i + 1}/${selectedMissingTopics.length}] ${msg}`))
       }
 
       setMissingGenMsg(`✅ Done! Generated targeted cards for ${selectedMissingTopics.length} missing topic${selectedMissingTopics.length > 1 ? 's' : ''}. Your deck is now more complete!`)

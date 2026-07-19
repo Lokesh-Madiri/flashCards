@@ -257,53 +257,85 @@ export async function generateCardsWithGroq(dataString: string, isCsv: boolean):
     throw new Error('Groq API key(s) not configured. Please set GROQ_API_KEYS or GROQ_API_KEY in your .env file.')
   }
 
-  // Round-robin selection
-  const apiKey = keys[groqKeyCounter % keys.length]
-  console.log(`[GroqRoundRobin] Using API key index ${groqKeyCounter % keys.length} of ${keys.length}`)
-  groqKeyCounter++
-
-  // Spacing delay to avoid rate limit spikes
-  const spacingTimeout = 2500
-  console.log(`[GroqRoundRobin] Sleeping for ${spacingTimeout}ms before request...`)
-  await new Promise(resolve => setTimeout(resolve, spacingTimeout))
-
   const prompt = GENERATION_PROMPT(isCsv) + '\n' + dataString
 
-  const response = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a structured assistant that outputs only valid JSON arrays. Do not include introductory text.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-    }),
-  });
+  let failedKeysCount = 0
+  const startIdx = groqKeyCounter
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Groq API error: ${response.status} - ${errText}`);
+  // Attempt to make the request cycling through all available keys
+  for (let i = 0; i < keys.length; i++) {
+    const currentKeyIdx = (startIdx + i) % keys.length
+    const apiKey = keys[currentKeyIdx]
+    groqKeyCounter = currentKeyIdx // Align global counter to current key
+
+    console.log(`[GroqRoundRobin] Trying API key index ${currentKeyIdx} of ${keys.length}`)
+
+    // Spacing delay to avoid immediate rate limit spikes
+    const spacingTimeout = 2500
+    await new Promise(resolve => setTimeout(resolve, spacingTimeout))
+
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a structured assistant that outputs only valid JSON arrays. Do not include introductory text.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.1,
+        }),
+      })
+
+      if (response.status === 429) {
+        console.warn(`[RateLimit] Key index ${currentKeyIdx} returned 429. Rotating to next key...`)
+        failedKeysCount++
+        continue
+      }
+
+      if (!response.ok) {
+        const errText = await response.text()
+        console.warn(`[GroqError] Key index ${currentKeyIdx} error: ${response.status} - ${errText}`)
+        failedKeysCount++
+        continue
+      }
+
+      const result = await response.json()
+      const rawText = result.choices?.[0]?.message?.content
+      if (!rawText) {
+        console.warn(`[GroqError] Key index ${currentKeyIdx} returned empty content`)
+        failedKeysCount++
+        continue
+      }
+
+      // Successfully processed! Advance key counter for next request
+      groqKeyCounter = (currentKeyIdx + 1) % keys.length
+      return parseJsonResponse(rawText)
+
+    } catch (err: any) {
+      console.warn(`[GroqError] Exception with key index ${currentKeyIdx}: ${err.message}`)
+      failedKeysCount++
+      continue
+    }
   }
 
-  const result = await response.json();
-  const rawText = result.choices?.[0]?.message?.content;
-  if (!rawText) {
-    throw new Error('Groq returned an empty response.');
+  // If we cycled through all keys and all failed
+  if (failedKeysCount >= keys.length) {
+    throw new Error('GROQ_ALL_KEYS_RATE_LIMITED')
   }
 
-  return parseJsonResponse(rawText);
+  throw new Error('Failed to generate cards with Groq after trying all keys.')
 }
 
 function parseJsonResponse(rawText: string): CardGenerationOutput[] {
